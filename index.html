@@ -53,6 +53,8 @@
   #tbl tr:hover { background: var(--empty); }
   #tbl tr.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
   .code { font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+  .tag { display: inline-block; font-size: 11px; color: var(--text-2); border: 1px solid var(--border);
+         border-radius: 999px; padding: 0 6px; white-space: nowrap; }
   .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
   #status { color: var(--text-2); }
   #status.err, #g-msg { color: #d03b3b; }
@@ -88,7 +90,7 @@
 <body>
 <main>
   <h1>Eventos das gruas</h1>
-  <p class="sub">Ocorrências por dia (início do evento, status “+”), relatório “Crane/MK event and overload messages” do LiDAT. Horário da máquina.</p>
+  <p class="sub">Ocorrências por dia (início do evento, status “+”; códigos que só têm “−”, como M569, contam o “−”), relatório “Crane/MK event and overload messages” do LiDAT. Horário da máquina.</p>
 
   <div class="filters">
     <label>Grua <select id="f-grua"></select></label>
@@ -172,6 +174,9 @@ const OPAC = [0.3, 0.45, 0.62, 0.8, 1];      // degradê: opacidade por faixa
 const RAIO = [0.4, 0.55, 0.7, 0.85, 1];      // círculos: diâmetro (fração da célula) por faixa
 
 let rows = [], mensagens = {}, catalogo = [], grupos = [], chart;
+let porFim = new Set();  // códigos que nunca têm "+" e por isso são contados pelo "−" (ex.: M569)
+const marca = c => porFim.has(c) ? " ⁻" : "";
+const NOTA_FIM = `<span class="tag" title="Este código só aparece com status “−” no LiDAT; contamos esses registros.">conta o “−”</span>`;
 
 async function api(path, all = true) {
   const out = [];
@@ -227,9 +232,10 @@ function tooltip(byDay, gr) {
       if (!d) return `<b>${fmt(p.value[0])}</b><br>sem ocorrências`;
       const top = [...d.codes].sort((a, b) => b[1] - a[1]);
       const sw = c => gr ? `<span class="sw" style="background:${cor(gr.codigos.indexOf(c))}"></span>` : "";
-      const lines = top.slice(0, 6).map(([c, n]) => `${sw(c)}<span class="code">${c}</span> ${n}`).join("<br>");
+      const lines = top.slice(0, 6).map(([c, n]) => `${sw(c)}<span class="code">${c}${marca(c)}</span> ${n}`).join("<br>");
+      const nota = top.some(([c]) => porFim.has(c)) ? `<br><small>⁻ contado pelo status “−”</small>` : "";
       const more = top.length > 6 ? `<br>+ ${top.length - 6} código(s)` : "";
-      return `<b>${fmt(p.value[0])}</b> · ${d.total} ocorrência(s)<br>${lines}${more}`;
+      return `<b>${fmt(p.value[0])}</b> · ${d.total} ocorrência(s)<br>${lines}${more}${nota}`;
     } };
 }
 
@@ -376,7 +382,7 @@ function render() {
   const lista = gr ? gr.codigos.map(c => [c, byCode.get(c)]) : [...byCode].sort((a, b) => b[1].total - a[1].total);
   $("tbl").innerHTML = lista.map(([c, v], i) =>
     `<tr data-c="${c}" class="${!gr && c === sel ? "sel" : ""}"><td class="code">` +
-    (gr ? `<span class="sw" style="background:${cor(i)}"></span>` : "") + `${c}</td><td>${esc(mensagens[c] ?? "")}</td>` +
+    (gr ? `<span class="sw" style="background:${cor(i)}"></span>` : "") + `${c}</td><td>${esc(mensagens[c] ?? "")}${porFim.has(c) ? " " + NOTA_FIM : ""}</td>` +
     `<td class="n">${(v?.total ?? 0).toLocaleString("pt-BR")}</td><td class="n">${v?.dias.size ?? 0}</td><td>${v ? fmt(v.ultimo) : "–"}</td></tr>`
   ).join("") || `<tr><td colspan="5">Nenhuma ocorrência com esses filtros.</td></tr>`;
 }
@@ -384,8 +390,9 @@ function render() {
 async function loadYear() {
   $("status").textContent = "Carregando…"; $("status").className = "";
   const ano = $("f-ano").value;
-  rows = await api(`evento_dia?select=grua,codigo,tipo,dia,qtd&dia=gte.${ano}-01-01&dia=lte.${ano}-12-31&order=dia,grua,codigo`);
+  rows = await api(`evento_dia?select=grua,codigo,tipo,dia,qtd,contado&dia=gte.${ano}-01-01&dia=lte.${ano}-12-31&order=dia,grua,codigo`);
   opt($("f-grua"), [["", "Todas"], ...[...new Set(rows.map(r => r.grua))].sort().map(g => [g, g])]);
+  porFim = new Set(rows.filter(r => r.contado === "-").map(r => r.codigo));
   refreshMonths(); refreshCodes(); render();
   $("status").textContent = "";
 }

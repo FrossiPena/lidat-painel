@@ -19,6 +19,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--page); color: var(--text);
          font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
@@ -58,12 +59,14 @@
     <label>Tipo <select id="f-tipo"></select></label>
     <label>Código <select id="f-codigo"></select></label>
     <label>Ano <select id="f-ano"></select></label>
+    <label>Visão <select id="f-visao"><option value="ano">Anual</option><option value="mes">Mensal</option></select></label>
+    <label id="l-mes" hidden>Mês <select id="f-mes"></select></label>
     <span id="status">Carregando…</span>
   </div>
 
   <section class="card">
     <div class="stats">
-      <div class="stat"><b id="s-total">–</b><span>ocorrências no ano</span></div>
+      <div class="stat"><b id="s-total">–</b><span id="s-total-l">ocorrências no ano</span></div>
       <div class="stat"><b id="s-dias">–</b><span>dias com ocorrência</span></div>
       <div class="stat"><b id="s-pico">–</b><span>dia com mais ocorrências</span></div>
     </div>
@@ -71,7 +74,7 @@
   </section>
 
   <section class="card">
-    <h2>Códigos no ano</h2>
+    <h2 id="t-codigos">Códigos no ano</h2>
     <p class="hint">Clique num código para ver só ele no calendário; clique de novo para voltar a todos.</p>
     <table>
       <thead><tr><th>Código</th><th>Mensagem</th><th class="n">Ocorrências</th><th class="n">Dias</th><th>Último dia</th></tr></thead>
@@ -118,9 +121,25 @@ const opt = (sel, items, keep) => {
   sel.value = items.some(([v]) => v === cur) ? cur : items[0][0];
 };
 
+const MESES = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+const MESES_LONGOS = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const mensal = () => $("f-visao").value === "mes";
+// Período exibido: "2026" (anual) ou "2026-11" (mensal); serve de prefixo de dia e de range do calendário.
+const periodo = () => mensal() ? `${$("f-ano").value}-${$("f-mes").value}` : $("f-ano").value;
+
 function filtered(ignoreCode = false) {
-  const g = $("f-grua").value, t = $("f-tipo").value, c = $("f-codigo").value;
-  return rows.filter(r => (!g || r.grua === g) && (!t || r.tipo === t) && (ignoreCode || !c || r.codigo === c));
+  const g = $("f-grua").value, t = $("f-tipo").value, c = $("f-codigo").value, p = periodo();
+  return rows.filter(r => r.dia.startsWith(p) && (!g || r.grua === g) && (!t || r.tipo === t) &&
+                          (ignoreCode || !c || r.codigo === c));
+}
+
+// Meses do ano; o padrão é o último mês com ocorrência (ou o mês atual, se for o ano corrente).
+function refreshMonths() {
+  const ano = $("f-ano").value, hoje = new Date();
+  const ult = rows.reduce((m, r) => r.dia > m ? r.dia : m, "");
+  const def = ano === String(hoje.getFullYear()) ? String(hoje.getMonth() + 1).padStart(2, "0")
+            : ult ? ult.slice(5, 7) : "01";
+  opt($("f-mes"), MESES_LONGOS.map((m, i) => [String(i + 1).padStart(2, "0"), m]), def);
 }
 
 function refreshCodes() {
@@ -129,7 +148,10 @@ function refreshCodes() {
 }
 
 function render() {
-  const ano = $("f-ano").value, data = filtered();
+  const p = periodo(), mes = mensal(), data = filtered();
+  $("l-mes").hidden = !mes;
+  $("s-total-l").textContent = mes ? "ocorrências no mês" : "ocorrências no ano";
+  $("t-codigos").textContent = mes ? "Códigos no mês" : "Códigos no ano";
   const byDay = new Map(), byCode = new Map();
   for (const r of data) {
     const d = byDay.get(r.dia) || { total: 0, codes: new Map() };
@@ -148,6 +170,30 @@ function render() {
   $("s-pico").textContent = pico ? `${fmt(pico[0])} (${pico[1]})` : "–";
 
   const ramp = dark.matches ? RAMP.dark : RAMP.light;
+  const bin = n => BINS.findIndex(([a, b]) => n >= a && n <= b);
+  let points, calendar;
+  if (mes) {
+    // Calendário clássico: colunas = dias da semana, linhas = semanas; todos os dias levam o número.
+    const [y, m] = p.split("-").map(Number), n = new Date(y, m, 0).getDate();
+    const onDark = i => dark.matches ? i <= 2 : i >= 2;  // células escuras pedem texto claro
+    points = Array.from({ length: n }, (_, i) => {
+      const dia = `${p}-${String(i + 1).padStart(2, "0")}`, q = byDay.get(dia)?.total ?? 0;
+      const fg = q && onDark(bin(q)) ? "#ffffff" : css("--text");
+      return { value: [dia, q], label: { color: fg, rich: { d: { color: fg }, n: { color: fg } } } };
+    });
+    const semanas = Math.ceil((new Date(y, m - 1, 1).getDay() + n) / 7);
+    $("cal").style.height = `${semanas * 64 + 80}px`;
+    calendar = { range: p, orient: "vertical", top: 30, left: 16, right: 16, bottom: 44, cellSize: ["auto", 64],
+      dayLabel: { firstDay: 0, position: "start", margin: 8, nameMap: ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"], color: css("--muted") },
+      monthLabel: { show: false } };
+  } else {
+    points = [...byDay].map(([dia, d]) => [dia, d.total]);
+    $("cal").style.height = "230px";
+    calendar = { range: p, top: 30, left: 40, right: 16, cellSize: ["auto", 16],
+      dayLabel: { firstDay: 0, nameMap: ["D", "S", "T", "Q", "Q", "S", "S"], color: css("--muted") },
+      monthLabel: { nameMap: MESES, color: css("--text-2") } };
+  }
+  chart.resize();
   chart.setOption({
     tooltip: {
       backgroundColor: css("--surface"), borderColor: css("--border"), textStyle: { color: css("--text") },
@@ -165,15 +211,13 @@ function render() {
       pieces: BINS.map(([a, b], i) => ({ min: a, max: b === Infinity ? undefined : b, color: ramp[i],
         label: b === Infinity ? `> ${a - 1}` : a === b ? `${a}` : `${a}–${b}` })),
       outOfRange: { color: css("--empty") } },
-    calendar: {
-      range: ano, top: 30, left: 40, right: 16, cellSize: ["auto", 16],
-      itemStyle: { color: css("--empty"), borderColor: css("--surface"), borderWidth: 2 },
-      splitLine: { show: false },
-      dayLabel: { firstDay: 0, nameMap: ["D", "S", "T", "Q", "Q", "S", "S"], color: css("--muted") },
-      monthLabel: { nameMap: ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"], color: css("--text-2") },
-      yearLabel: { show: false } },
-    series: [{ type: "heatmap", coordinateSystem: "calendar",
-      data: [...byDay].map(([dia, d]) => [dia, d.total]),
+    calendar: { ...calendar,
+      itemStyle: { color: css("--empty"), borderColor: css("--surface"), borderWidth: mes ? 3 : 2 },
+      splitLine: { show: false }, yearLabel: { show: false } },
+    series: [{ type: "heatmap", coordinateSystem: "calendar", data: points,
+      label: { show: mes, position: "insideTopLeft", lineHeight: 18,
+        formatter: q => `{d|${+q.value[0].slice(8)}}` + (q.value[1] ? `\n{n|${q.value[1]}}` : ""),
+        rich: { d: { fontSize: 12 }, n: { fontSize: 16, fontWeight: 600, padding: [6, 0, 0, 0] } } },
       emphasis: { itemStyle: { borderColor: css("--text"), borderWidth: 1 } } }],
   }, true);
 
@@ -189,7 +233,7 @@ async function loadYear() {
   const ano = $("f-ano").value;
   rows = await api(`evento_dia?select=grua,codigo,tipo,dia,qtd&dia=gte.${ano}-01-01&dia=lte.${ano}-12-31&order=dia,grua,codigo`);
   opt($("f-grua"), [["", "Todas"], ...[...new Set(rows.map(r => r.grua))].sort().map(g => [g, g])]);
-  refreshCodes(); render();
+  refreshMonths(); refreshCodes(); render();
   $("status").textContent = "";
 }
 
@@ -210,6 +254,12 @@ async function init() {
   $("f-ano").onchange = () => loadYear().catch(fail);
   $("f-grua").onchange = $("f-tipo").onchange = () => { refreshCodes(); render(); };
   $("f-codigo").onchange = render;
+  $("f-visao").onchange = $("f-mes").onchange = () => { refreshCodes(); render(); };
+  // No anual, clicar num dia abre o mês dele.
+  chart.on("click", e => {
+    if (mensal()) return;
+    $("f-visao").value = "mes"; $("f-mes").value = e.value[0].slice(5, 7); refreshCodes(); render();
+  });
   $("tbl").onclick = e => {
     const tr = e.target.closest("tr[data-c]"); if (!tr) return;
     $("f-codigo").value = $("f-codigo").value === tr.dataset.c ? "" : tr.dataset.c; render();

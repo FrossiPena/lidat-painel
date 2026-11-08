@@ -26,13 +26,22 @@
   h1 { font-size: 20px; margin: 0 0 4px; }
   .sub { color: var(--text-2); margin: 0 0 20px; }
   .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin-bottom: 16px; }
-  .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
-  select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
-           border-radius: 6px; padding: 6px 8px; min-width: 120px; }
+  .filters label, dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
+  select, input, button { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+           border-radius: 6px; padding: 6px 8px; }
+  select { min-width: 120px; }
+  select:disabled { opacity: .5; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
   .card h2 { font-size: 15px; margin: 0 0 4px; }
   .card .hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
   #cal { width: 100%; height: 230px; }
+  #leg { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: center;
+         color: var(--text-2); font-size: 12px; margin-top: 4px; }
+  #leg span { display: inline-flex; align-items: center; gap: 5px; }
+  #leg i { display: inline-block; background: var(--text-2); }
   .stats { display: flex; gap: 32px; flex-wrap: wrap; margin-bottom: 8px; }
   .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
   .stat span { color: var(--text-2); font-size: 12px; }
@@ -40,13 +49,40 @@
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
   th { color: var(--text-2); font-weight: 600; font-size: 12px; }
   td.n, th.n { text-align: right; }
-  tbody tr { cursor: pointer; }
-  tbody tr:hover { background: var(--empty); }
-  tbody tr.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #tbl tr { cursor: pointer; }
+  #tbl tr:hover { background: var(--empty); }
+  #tbl tr.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
   .code { font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
   #status { color: var(--text-2); }
-  #status.err { color: #d03b3b; }
+  #status.err, #g-msg { color: #d03b3b; }
   footer { color: var(--muted); font-size: 12px; }
+
+  /* Gerenciar grupos */
+  dialog { width: min(680px, calc(100% - 32px)); max-height: calc(100% - 32px); background: var(--surface); color: var(--text);
+           border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  dialog::backdrop { background: rgb(0 0 0 / .4); }
+  dialog h2 { font-size: 17px; margin: 0 0 12px; }
+  dialog h3 { font-size: 14px; margin: 18px 0 8px; }
+  dialog input { width: 100%; }
+  #g-lista { list-style: none; margin: 0; padding: 0; }
+  #g-lista li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  #g-lista li b { margin-right: 4px; }
+  #g-lista li .acts { margin-left: auto; display: flex; gap: 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px;
+          font: 600 12px ui-monospace, Consolas, monospace; }
+  .chip button { border: 0; background: none; color: inherit; padding: 0 2px; font-size: 14px; line-height: 1; }
+  #g-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; min-height: 4px; }
+  #g-sug { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto;
+           border: 1px solid var(--border); border-radius: 6px; }
+  #g-sug:empty { display: none; }
+  #g-sug li { padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  #g-sug li:last-child { border-bottom: 0; }
+  #g-sug li:hover, #g-sug li.on { background: var(--empty); }
+  #g-sug li small { display: block; color: var(--text-2); }
+  #g-sug li.info { cursor: default; color: var(--muted); font-size: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; align-items: center; }
+  .row .sp { flex: 1; }
 </style>
 </head>
 <body>
@@ -58,9 +94,12 @@
     <label>Grua <select id="f-grua"></select></label>
     <label>Tipo <select id="f-tipo"></select></label>
     <label>Código <select id="f-codigo"></select></label>
+    <label>Grupo de eventos <select id="f-grupo"></select></label>
+    <button id="b-grupos" type="button">Grupos…</button>
     <label>Ano <select id="f-ano"></select></label>
     <label>Visão <select id="f-visao"><option value="ano">Anual</option><option value="mes">Mensal</option></select></label>
     <label id="l-mes" hidden>Mês <select id="f-mes"></select></label>
+    <label id="l-estilo" hidden>Estilo <select id="f-estilo"><option value="grad">Degradê</option><option value="circ">Círculos</option></select></label>
     <span id="status">Carregando…</span>
   </div>
 
@@ -71,11 +110,12 @@
       <div class="stat"><b id="s-pico">–</b><span>dia com mais ocorrências</span></div>
     </div>
     <div id="cal" role="img" aria-label="Calendário de ocorrências por dia"></div>
+    <div id="leg"></div>
   </section>
 
   <section class="card">
     <h2 id="t-codigos">Códigos no ano</h2>
-    <p class="hint">Clique num código para ver só ele no calendário; clique de novo para voltar a todos.</p>
+    <p class="hint" id="t-hint">Clique num código para ver só ele no calendário; clique de novo para voltar a todos.</p>
     <table>
       <thead><tr><th>Código</th><th>Mensagem</th><th class="n">Ocorrências</th><th class="n">Dias</th><th>Último dia</th></tr></thead>
       <tbody id="tbl"></tbody>
@@ -85,22 +125,53 @@
   <footer id="foot"></footer>
 </main>
 
+<dialog id="dlg">
+  <h2>Grupos de eventos</h2>
+  <ul id="g-lista"></ul>
+  <h3 id="g-titulo">Novo grupo</h3>
+  <label>Nome do grupo <input id="g-nome" maxlength="60" placeholder="Ex.: Vento forte" autocomplete="off"></label>
+  <div id="g-chips"></div>
+  <label>Adicionar código <input id="g-busca" placeholder="Digite o código (W56…) ou parte da descrição (vento, wind…)" autocomplete="off"></label>
+  <ul id="g-sug"></ul>
+  <p id="g-msg"></p>
+  <div class="row">
+    <button type="button" class="primary" id="g-salvar">Salvar grupo</button>
+    <button type="button" id="g-limpar">Novo grupo</button>
+    <span class="sp"></span>
+    <button type="button" id="g-fechar">Fechar</button>
+  </div>
+  <p class="hint" style="color:var(--muted);font-size:12px;margin:12px 0 0">Os grupos ficam salvos neste navegador; em outro computador ou celular é preciso criá-los de novo.</p>
+</dialog>
+
 <script>
 // Leitura pública (chave publishable); a escrita só acontece pelo lidat_supabase.py com a chave secreta.
 const SUPABASE_URL = "https://akqjfvysidivlzfwijwo.supabase.co";
 const SUPABASE_KEY = "sb_publishable_89K120ZmIDInH4bQf2dh2w_1jyjQvq4";
 const PAGE = 1000;  // limite padrão de linhas por requisição da API
 const TIPOS = { E: "E – erro", W: "W – aviso", M: "M – mensagem", S: "S – status" };
+const MESES = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
+const MESES_LONGOS = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+const DIAS = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
 const $ = id => document.getElementById(id);
 const dark = matchMedia("(prefers-color-scheme: dark)");
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+const norm = s => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 // Faixas de quantidade por dia (escala sequencial azul, clara -> escura; no tema escuro, escura -> clara).
 const BINS = [[1, 1], [2, 5], [6, 20], [21, 100], [101, Infinity]];
+const BIN_LABELS = BINS.map(([a, b]) => b === Infinity ? `> ${a - 1}` : a === b ? `${a}` : `${a}–${b}`);
 const RAMP = { light: ["#b7d3f6", "#6da7ec", "#2a78d6", "#1c5cab", "#0d366b"],
                dark:  ["#104281", "#1c5cab", "#2a78d6", "#5598e7", "#9ec5f4"] };
+const bin = n => BINS.findIndex(([a, b]) => n >= a && n <= b);
+// Grupos: uma cor sólida por código, na ordem em que foram adicionados (vermelho e verde afastados).
+const CORES = ["#e03131", "#1971c2", "#f2c200", "#7b2fbf", "#f76707", "#2f9e44", "#0c8599", "#d6336c", "#795548", "#495057"];
+const TXT = c => (c === "#f2c200" ? "#0b0b0b" : "#ffffff");
+const cor = i => CORES[i % CORES.length];
+const OPAC = [0.3, 0.45, 0.62, 0.8, 1];      // degradê: opacidade por faixa
+const RAIO = [0.4, 0.55, 0.7, 0.85, 1];      // círculos: diâmetro (fração da célula) por faixa
 
-let rows = [], mensagens = {}, chart;
+let rows = [], mensagens = {}, catalogo = [], grupos = [], chart;
 
 async function api(path, all = true) {
   const out = [];
@@ -117,20 +188,19 @@ async function api(path, all = true) {
 const fmt = d => d.split("-").reverse().join("/");
 const opt = (sel, items, keep) => {
   const cur = keep ?? sel.value;
-  sel.innerHTML = items.map(([v, t]) => `<option value="${v}">${t}</option>`).join("");
+  sel.innerHTML = items.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
   sel.value = items.some(([v]) => v === cur) ? cur : items[0][0];
 };
 
-const MESES = ["jan","fev","mar","abr","mai","jun","jul","ago","set","out","nov","dez"];
-const MESES_LONGOS = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 const mensal = () => $("f-visao").value === "mes";
 // Período exibido: "2026" (anual) ou "2026-11" (mensal); serve de prefixo de dia e de range do calendário.
 const periodo = () => mensal() ? `${$("f-ano").value}-${$("f-mes").value}` : $("f-ano").value;
+const grupoAtual = () => grupos.find(g => g.nome === $("f-grupo").value);
 
 function filtered(ignoreCode = false) {
-  const g = $("f-grua").value, t = $("f-tipo").value, c = $("f-codigo").value, p = periodo();
+  const g = $("f-grua").value, t = $("f-tipo").value, c = $("f-codigo").value, p = periodo(), gr = grupoAtual();
   return rows.filter(r => r.dia.startsWith(p) && (!g || r.grua === g) && (!t || r.tipo === t) &&
-                          (ignoreCode || !c || r.codigo === c));
+    (gr ? gr.codigos.includes(r.codigo) : ignoreCode || !c || r.codigo === c));
 }
 
 // Meses do ano; o padrão é o último mês com ocorrência (ou o mês atual, se for o ano corrente).
@@ -147,12 +217,134 @@ function refreshCodes() {
   opt($("f-codigo"), [["", "Todos"], ...codes.map(c => [c, c])]);
 }
 
+// ---------- calendário ----------
+
+function tooltip(byDay, gr) {
+  return {
+    backgroundColor: css("--surface"), borderColor: css("--border"), textStyle: { color: css("--text") },
+    formatter: p => {
+      const d = byDay.get(p.value[0]);
+      if (!d) return `<b>${fmt(p.value[0])}</b><br>sem ocorrências`;
+      const top = [...d.codes].sort((a, b) => b[1] - a[1]);
+      const sw = c => gr ? `<span class="sw" style="background:${cor(gr.codigos.indexOf(c))}"></span>` : "";
+      const lines = top.slice(0, 6).map(([c, n]) => `${sw(c)}<span class="code">${c}</span> ${n}`).join("<br>");
+      const more = top.length > 6 ? `<br>+ ${top.length - 6} código(s)` : "";
+      return `<b>${fmt(p.value[0])}</b> · ${d.total} ocorrência(s)<br>${lines}${more}`;
+    } };
+}
+
+function monthGrid(p, cellH) {
+  const [y, m] = p.split("-").map(Number), n = new Date(y, m, 0).getDate();
+  const semanas = Math.ceil((new Date(y, m - 1, 1).getDay() + n) / 7);
+  const dias = Array.from({ length: n }, (_, i) => `${p}-${String(i + 1).padStart(2, "0")}`);
+  const calendar = { range: p, orient: "vertical", top: 30, left: 16, right: 16, cellSize: ["auto", cellH],
+    dayLabel: { firstDay: 0, position: "start", margin: 8, nameMap: DIAS, color: css("--muted") },
+    monthLabel: { show: false } };
+  return { dias, semanas, calendar };
+}
+
+const cellBase = mes => ({ itemStyle: { color: css("--empty"), borderColor: css("--surface"), borderWidth: mes ? 3 : 2 },
+                           splitLine: { show: false }, yearLabel: { show: false } });
+
+// Sem grupo: heatmap azul (anual ou mensal).
+function optPadrao(p, mes, byDay) {
+  const ramp = dark.matches ? RAMP.dark : RAMP.light;
+  let points, calendar, height;
+  if (mes) {
+    // Calendário clássico: colunas = dias da semana, linhas = semanas; todos os dias levam o número.
+    const g = monthGrid(p, 64), onDark = i => dark.matches ? i <= 2 : i >= 2;  // células escuras pedem texto claro
+    points = g.dias.map(dia => {
+      const q = byDay.get(dia)?.total ?? 0, fg = q && onDark(bin(q)) ? "#ffffff" : css("--text");
+      return { value: [dia, q], label: { color: fg, rich: { d: { color: fg }, n: { color: fg } } } };
+    });
+    calendar = { ...g.calendar, bottom: 44 }; height = g.semanas * 64 + 80;
+  } else {
+    points = [...byDay].map(([dia, d]) => [dia, d.total]);
+    calendar = { range: p, top: 30, left: 40, right: 16, cellSize: ["auto", 16],
+      dayLabel: { firstDay: 0, nameMap: ["D", "S", "T", "Q", "Q", "S", "S"], color: css("--muted") },
+      monthLabel: { nameMap: MESES, color: css("--text-2") } };
+    height = 230;
+  }
+  return { height, option: {
+    visualMap: {
+      type: "piecewise", orient: "horizontal", left: "center", bottom: 0, itemWidth: 14, itemHeight: 14,
+      textStyle: { color: css("--text-2") },
+      pieces: BINS.map(([a, b], i) => ({ min: a, max: b === Infinity ? undefined : b, color: ramp[i], label: BIN_LABELS[i] })),
+      outOfRange: { color: css("--empty") } },
+    calendar: { ...calendar, ...cellBase(mes) },
+    series: [{ type: "heatmap", coordinateSystem: "calendar", data: points,
+      label: { show: mes, position: "insideTopLeft", lineHeight: 18,
+        formatter: q => `{d|${+q.value[0].slice(8)}}` + (q.value[1] ? `\n{n|${q.value[1]}}` : ""),
+        rich: { d: { fontSize: 12 }, n: { fontSize: 16, fontWeight: 600, padding: [6, 0, 0, 0] } } },
+      emphasis: { itemStyle: { borderColor: css("--text"), borderWidth: 1 } } }],
+  } };
+}
+
+// Grupo, anual: uma faixa de calendário por código, na cor dele (degradê ou círculo pelo nº de ocorrências).
+function optGrupoAno(p, gr, byDayCode, byCode) {
+  const CELL = 14, H = 7 * CELL + 58, y = +p, circ = $("f-estilo").value === "circ";
+  const dias = (new Date(y, 1, 29).getMonth() === 1 ? 366 : 365);
+  const cw = (chart.getWidth() - 56) / Math.ceil((new Date(y, 0, 1).getDay() + dias) / 7);
+  const lado = Math.max(2, Math.min(cw, CELL) - 2);
+  const calendar = [], series = [], graphic = [];
+  gr.codigos.forEach((c, i) => {
+    const top = i * H, tot = byCode.get(c)?.total ?? 0;
+    calendar.push({ range: p, top: top + 46, left: 40, right: 16, cellSize: ["auto", CELL], ...cellBase(false),
+      dayLabel: { firstDay: 0, nameMap: ["D", "S", "T", "Q", "Q", "S", "S"], color: css("--muted"), fontSize: 10 },
+      monthLabel: { nameMap: MESES, color: css("--text-2"), fontSize: 11 } });
+    graphic.push({ type: "rect", left: 40, top: top + 6, shape: { width: 12, height: 12, r: 2 }, style: { fill: cor(i) } },
+      { type: "text", left: 58, top: top + 5, style: { fill: css("--text"), font: "13px system-ui, sans-serif",
+        text: `${c} · ${tot.toLocaleString("pt-BR")} ocorrência(s)${mensagens[c] ? " · " + mensagens[c] : ""}` } });
+    series.push({ type: "scatter", coordinateSystem: "calendar", calendarIndex: i, symbol: circ ? "circle" : "rect",
+      itemStyle: { color: cor(i) },
+      data: (byDayCode.get(c) || []).map(([dia, q]) => ({ value: [dia, q],
+        symbolSize: circ ? Math.max(3, lado * RAIO[bin(q)]) : [Math.max(2, cw - 2), CELL - 2],
+        itemStyle: { opacity: circ ? 1 : OPAC[bin(q)] } })) });
+  });
+  return { height: gr.codigos.length * H + 4, option: { calendar, series, graphic } };
+}
+
+// Grupo, mensal: calendário clássico com uma etiqueta colorida por código em cada dia.
+function optGrupoMes(p, gr, byDay) {
+  const k = gr.codigos.length, linhas = Math.min(k, 3) + (k > 3 ? 1 : 0), cellH = Math.max(64, 28 + 19 * linhas);
+  const g = monthGrid(p, cellH), rich = { d: { fontSize: 12, color: css("--text") }, mais: { fontSize: 11, color: css("--text-2") } };
+  gr.codigos.forEach((c, i) => rich[`c${i}`] = { backgroundColor: cor(i), color: TXT(cor(i)), borderRadius: 3,
+                                                padding: [2, 4], fontSize: 11, fontWeight: 600 });
+  return { height: g.semanas * cellH + 44, option: {
+    visualMap: { show: false, min: 0, max: 1, inRange: { color: [css("--empty"), css("--empty")] } },
+    calendar: { ...g.calendar, bottom: 8, ...cellBase(true) },
+    series: [{ type: "heatmap", coordinateSystem: "calendar", data: g.dias.map(dia => [dia, byDay.get(dia)?.total ?? 0]),
+      label: { show: true, position: "insideTopLeft", lineHeight: 19, rich,
+        formatter: q => {
+          const cs = [...(byDay.get(q.value[0])?.codes || [])].sort((a, b) => b[1] - a[1]);
+          const ls = cs.slice(0, 3).map(([c, n]) => `{c${gr.codigos.indexOf(c)}|${c} ${n}}`);
+          if (cs.length > 3) ls.push(`{mais|+ ${cs.length - 3}}`);
+          return [`{d|${+q.value[0].slice(8)}}`, ...ls].join("\n");
+        } },
+      emphasis: { itemStyle: { borderColor: css("--text"), borderWidth: 1 } } }],
+  } };
+}
+
+function legenda(gr, mes) {
+  if (!gr || mes) return "";
+  const circ = $("f-estilo").value === "circ";
+  const itens = BIN_LABELS.map((t, i) => circ
+    ? `<span><i style="width:${4 + 10 * RAIO[i]}px;height:${4 + 10 * RAIO[i]}px;border-radius:50%"></i>${t}</span>`
+    : `<span><i style="width:14px;height:14px;border-radius:2px;opacity:${OPAC[i]}"></i>${t}</span>`).join("");
+  return `<span>Ocorrências no dia:</span>${itens}`;
+}
+
 function render() {
-  const p = periodo(), mes = mensal(), data = filtered();
+  if (!chart || !$("f-ano").value) return;
+  const p = periodo(), mes = mensal(), gr = grupoAtual(), data = filtered();
   $("l-mes").hidden = !mes;
+  $("l-estilo").hidden = !gr || mes;
+  $("f-codigo").disabled = !!gr;
   $("s-total-l").textContent = mes ? "ocorrências no mês" : "ocorrências no ano";
-  $("t-codigos").textContent = mes ? "Códigos no mês" : "Códigos no ano";
-  const byDay = new Map(), byCode = new Map();
+  $("t-codigos").textContent = (gr ? `Grupo “${gr.nome}”` : "Códigos") + (mes ? " no mês" : " no ano");
+  $("t-hint").hidden = !!gr;
+
+  const byDay = new Map(), byCode = new Map(), byDayCode = new Map();
   for (const r of data) {
     const d = byDay.get(r.dia) || { total: 0, codes: new Map() };
     d.total += r.qtd; d.codes.set(r.codigo, (d.codes.get(r.codigo) || 0) + r.qtd);
@@ -160,6 +352,10 @@ function render() {
     const c = byCode.get(r.codigo) || { total: 0, dias: new Set(), ultimo: "" };
     c.total += r.qtd; c.dias.add(r.dia); if (r.dia > c.ultimo) c.ultimo = r.dia;
     byCode.set(r.codigo, c);
+  }
+  if (gr) for (const [dia, d] of byDay) for (const [c, n] of d.codes) {
+    if (!byDayCode.has(c)) byDayCode.set(c, []);
+    byDayCode.get(c).push([dia, n]);
   }
 
   const total = data.reduce((s, r) => s + r.qtd, 0);
@@ -169,62 +365,19 @@ function render() {
   $("s-dias").textContent = byDay.size;
   $("s-pico").textContent = pico ? `${fmt(pico[0])} (${pico[1]})` : "–";
 
-  const ramp = dark.matches ? RAMP.dark : RAMP.light;
-  const bin = n => BINS.findIndex(([a, b]) => n >= a && n <= b);
-  let points, calendar;
-  if (mes) {
-    // Calendário clássico: colunas = dias da semana, linhas = semanas; todos os dias levam o número.
-    const [y, m] = p.split("-").map(Number), n = new Date(y, m, 0).getDate();
-    const onDark = i => dark.matches ? i <= 2 : i >= 2;  // células escuras pedem texto claro
-    points = Array.from({ length: n }, (_, i) => {
-      const dia = `${p}-${String(i + 1).padStart(2, "0")}`, q = byDay.get(dia)?.total ?? 0;
-      const fg = q && onDark(bin(q)) ? "#ffffff" : css("--text");
-      return { value: [dia, q], label: { color: fg, rich: { d: { color: fg }, n: { color: fg } } } };
-    });
-    const semanas = Math.ceil((new Date(y, m - 1, 1).getDay() + n) / 7);
-    $("cal").style.height = `${semanas * 64 + 80}px`;
-    calendar = { range: p, orient: "vertical", top: 30, left: 16, right: 16, bottom: 44, cellSize: ["auto", 64],
-      dayLabel: { firstDay: 0, position: "start", margin: 8, nameMap: ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"], color: css("--muted") },
-      monthLabel: { show: false } };
-  } else {
-    points = [...byDay].map(([dia, d]) => [dia, d.total]);
-    $("cal").style.height = "230px";
-    calendar = { range: p, top: 30, left: 40, right: 16, cellSize: ["auto", 16],
-      dayLabel: { firstDay: 0, nameMap: ["D", "S", "T", "Q", "Q", "S", "S"], color: css("--muted") },
-      monthLabel: { nameMap: MESES, color: css("--text-2") } };
-  }
+  const { height, option } = !gr ? optPadrao(p, mes, byDay)
+    : mes ? optGrupoMes(p, gr, byDay) : optGrupoAno(p, gr, byDayCode, byCode);
+  $("cal").style.height = `${height}px`;
   chart.resize();
-  chart.setOption({
-    tooltip: {
-      backgroundColor: css("--surface"), borderColor: css("--border"), textStyle: { color: css("--text") },
-      formatter: p => {
-        const d = byDay.get(p.value[0]);
-        if (!d) return `<b>${fmt(p.value[0])}</b><br>sem ocorrências`;
-        const top = [...d.codes].sort((a, b) => b[1] - a[1]);
-        const lines = top.slice(0, 6).map(([c, n]) => `<span class="code">${c}</span> ${n}`).join("<br>");
-        const more = top.length > 6 ? `<br>+ ${top.length - 6} código(s)` : "";
-        return `<b>${fmt(p.value[0])}</b> · ${d.total} ocorrência(s)<br>${lines}${more}`;
-      } },
-    visualMap: {
-      type: "piecewise", orient: "horizontal", left: "center", bottom: 0, itemWidth: 14, itemHeight: 14,
-      textStyle: { color: css("--text-2") },
-      pieces: BINS.map(([a, b], i) => ({ min: a, max: b === Infinity ? undefined : b, color: ramp[i],
-        label: b === Infinity ? `> ${a - 1}` : a === b ? `${a}` : `${a}–${b}` })),
-      outOfRange: { color: css("--empty") } },
-    calendar: { ...calendar,
-      itemStyle: { color: css("--empty"), borderColor: css("--surface"), borderWidth: mes ? 3 : 2 },
-      splitLine: { show: false }, yearLabel: { show: false } },
-    series: [{ type: "heatmap", coordinateSystem: "calendar", data: points,
-      label: { show: mes, position: "insideTopLeft", lineHeight: 18,
-        formatter: q => `{d|${+q.value[0].slice(8)}}` + (q.value[1] ? `\n{n|${q.value[1]}}` : ""),
-        rich: { d: { fontSize: 12 }, n: { fontSize: 16, fontWeight: 600, padding: [6, 0, 0, 0] } } },
-      emphasis: { itemStyle: { borderColor: css("--text"), borderWidth: 1 } } }],
-  }, true);
+  chart.setOption({ tooltip: tooltip(byDay, gr), ...option }, true);
+  $("leg").innerHTML = legenda(gr, mes);
 
   const sel = $("f-codigo").value;
-  $("tbl").innerHTML = [...byCode].sort((a, b) => b[1].total - a[1].total).map(([c, v]) =>
-    `<tr data-c="${c}" class="${c === sel ? "sel" : ""}"><td class="code">${c}</td><td>${mensagens[c] ?? ""}</td>` +
-    `<td class="n">${v.total.toLocaleString("pt-BR")}</td><td class="n">${v.dias.size}</td><td>${fmt(v.ultimo)}</td></tr>`
+  const lista = gr ? gr.codigos.map(c => [c, byCode.get(c)]) : [...byCode].sort((a, b) => b[1].total - a[1].total);
+  $("tbl").innerHTML = lista.map(([c, v], i) =>
+    `<tr data-c="${c}" class="${!gr && c === sel ? "sel" : ""}"><td class="code">` +
+    (gr ? `<span class="sw" style="background:${cor(i)}"></span>` : "") + `${c}</td><td>${esc(mensagens[c] ?? "")}</td>` +
+    `<td class="n">${(v?.total ?? 0).toLocaleString("pt-BR")}</td><td class="n">${v?.dias.size ?? 0}</td><td>${v ? fmt(v.ultimo) : "–"}</td></tr>`
   ).join("") || `<tr><td colspan="5">Nenhuma ocorrência com esses filtros.</td></tr>`;
 }
 
@@ -237,9 +390,116 @@ async function loadYear() {
   $("status").textContent = "";
 }
 
+// ---------- grupos (salvos no navegador) ----------
+
+const KEY = "lidat.grupos";
+function carregaGrupos() { try { grupos = JSON.parse(localStorage.getItem(KEY)) || []; } catch { grupos = []; } }
+function salvaGrupos() { try { localStorage.setItem(KEY, JSON.stringify(grupos)); return true; } catch { return false; } }
+const refreshGrupos = keep => opt($("f-grupo"), [["", "Nenhum"], ...grupos.map(g => [g.nome, g.nome])], keep);
+
+let editando = null, escolhidos = [], ativo = 0;
+
+function sugestoes(q) {
+  const qn = norm(q.trim());
+  if (!qn) return { itens: [], resto: 0 };
+  const porCodigo = catalogo.filter(x => norm(x.codigo).startsWith(qn));
+  const porTexto = qn.length >= 3 ? catalogo.filter(x => !norm(x.codigo).startsWith(qn) && x.busca.includes(qn)) : [];
+  const todos = [...porCodigo, ...porTexto].filter(x => !escolhidos.includes(x.codigo));
+  return { itens: todos.slice(0, 20), resto: Math.max(0, todos.length - 20) };
+}
+
+function renderSug() {
+  const q = $("g-busca").value, { itens, resto } = sugestoes(q);
+  ativo = Math.min(ativo, Math.max(0, itens.length - 1));
+  let html = itens.map((x, i) => `<li data-c="${x.codigo}" class="${i === ativo ? "on" : ""}"><span class="code">${x.codigo}</span> ` +
+    `${esc(x.en || "")}${x.pt ? `<small>${esc(x.pt)}</small>` : ""}</li>`).join("");
+  if (resto) html += `<li class="info">+ ${resto} outro(s) — continue digitando para filtrar</li>`;
+  if (q.trim() && !itens.length) html = `<li class="info">Nenhum código encontrado.` +
+    (/^[a-z]\d{1,4}$/i.test(q.trim()) ? ` Enter adiciona ${esc(q.trim().toUpperCase())} assim mesmo.` : "") + `</li>`;
+  $("g-sug").innerHTML = html;
+}
+
+function renderChips() {
+  $("g-chips").innerHTML = escolhidos.map((c, i) =>
+    `<span class="chip" style="background:${cor(i)};color:${TXT(cor(i))}" title="${esc(mensagens[c] ?? "")}">${c}` +
+    `<button type="button" data-rm="${c}" aria-label="Remover ${c}">×</button></span>`).join("");
+}
+
+function renderLista() {
+  $("g-lista").innerHTML = grupos.map((g, gi) => `<li><b>${esc(g.nome)}</b>` +
+    g.codigos.map((c, i) => `<span class="chip" style="background:${cor(i)};color:${TXT(cor(i))}">${c}</span>`).join("") +
+    `<span class="acts"><button type="button" data-ed="${gi}">Editar</button><button type="button" data-del="${gi}">Excluir</button></span></li>`
+  ).join("") || `<li style="color:var(--muted)">Nenhum grupo criado ainda.</li>`;
+}
+
+function formGrupo(g) {
+  editando = g ? g.nome : null; escolhidos = g ? [...g.codigos] : [];
+  $("g-titulo").textContent = g ? `Editar “${g.nome}”` : "Novo grupo";
+  $("g-nome").value = g ? g.nome : ""; $("g-busca").value = ""; $("g-msg").textContent = "";
+  renderChips(); renderSug();
+}
+
+function adiciona(c) {
+  c = c.toUpperCase();
+  if (!/^[A-Z]\d{1,4}$/.test(c) || escolhidos.includes(c)) return;
+  escolhidos.push(c); $("g-busca").value = ""; ativo = 0;
+  renderChips(); renderSug(); $("g-busca").focus();
+}
+
+function salvar() {
+  const nome = $("g-nome").value.trim();
+  if (!nome) return $("g-msg").textContent = "Dê um nome ao grupo.";
+  if (!escolhidos.length) return $("g-msg").textContent = "Adicione pelo menos um código.";
+  if (grupos.some(g => g.nome === nome && g.nome !== editando)) return $("g-msg").textContent = "Já existe um grupo com esse nome.";
+  const novo = { nome, codigos: [...escolhidos] }, i = grupos.findIndex(g => g.nome === editando);
+  if (i >= 0) grupos[i] = novo; else grupos.push(novo);
+  grupos.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  if (!salvaGrupos()) return $("g-msg").textContent = "Este navegador não permite salvar (modo anônimo?).";
+  refreshGrupos(nome); $("dlg").close(); refreshCodes(); render();
+}
+
+function initGrupos() {
+  carregaGrupos(); refreshGrupos("");
+  $("f-grupo").onchange = () => { refreshCodes(); render(); };
+  $("f-estilo").onchange = render;
+  $("b-grupos").onclick = () => { renderLista(); formGrupo(null); $("dlg").showModal(); $("g-nome").focus(); };
+  $("g-fechar").onclick = () => $("dlg").close();
+  $("g-limpar").onclick = () => formGrupo(null);
+  $("g-salvar").onclick = salvar;
+  $("g-busca").oninput = () => { ativo = 0; renderSug(); };
+  $("g-busca").onkeydown = e => {
+    const n = $("g-sug").querySelectorAll("li[data-c]").length;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault(); if (n) { ativo = (ativo + (e.key === "ArrowDown" ? 1 : n - 1)) % n; renderSug(); }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const li = $("g-sug").querySelectorAll("li[data-c]")[ativo];
+      adiciona(li ? li.dataset.c : $("g-busca").value.trim());
+    }
+  };
+  $("g-sug").onclick = e => { const li = e.target.closest("li[data-c]"); if (li) adiciona(li.dataset.c); };
+  $("g-chips").onclick = e => {
+    const b = e.target.closest("[data-rm]"); if (!b) return;
+    escolhidos = escolhidos.filter(c => c !== b.dataset.rm); renderChips(); renderSug();
+  };
+  $("g-lista").onclick = e => {
+    const ed = e.target.closest("[data-ed]"), del = e.target.closest("[data-del]");
+    if (ed) { formGrupo(grupos[+ed.dataset.ed]); $("g-nome").focus(); }
+    if (del) {
+      const g = grupos[+del.dataset.del];
+      if (!confirm(`Excluir o grupo “${g.nome}”?`)) return;
+      grupos.splice(+del.dataset.del, 1); salvaGrupos(); renderLista();
+      if (editando === g.nome) formGrupo(null);
+      refreshGrupos(); refreshCodes(); render();
+    }
+  };
+}
+
+// ---------- início ----------
+
 async function init() {
   chart = echarts.init($("cal"));
-  addEventListener("resize", () => chart.resize());
+  addEventListener("resize", render);
   dark.addEventListener("change", render);
   opt($("f-tipo"), [["", "Todos"], ...Object.entries(TIPOS)]);
   const [first] = await api("evento?select=hora&order=hora.asc&limit=1", false);
@@ -250,20 +510,23 @@ async function init() {
   opt($("f-ano"), anos);
   if (last) $("foot").textContent = `Último evento registrado: ${fmt(last.hora.slice(0, 10))} ${last.hora.slice(11, 19)}.`;
   for (const r of await api("codigo?select=codigo,mensagem")) mensagens[r.codigo] = r.mensagem;
+  // Catálogo para as sugestões: por ora, os códigos que já apareceram nos dados (descrição em inglês do LiDAT).
+  catalogo = Object.entries(mensagens).sort().map(([codigo, en]) => ({ codigo, en, pt: "", busca: norm(`${en}`) }));
 
+  initGrupos();
   $("f-ano").onchange = () => loadYear().catch(fail);
   $("f-grua").onchange = $("f-tipo").onchange = () => { refreshCodes(); render(); };
   $("f-codigo").onchange = render;
   $("f-visao").onchange = $("f-mes").onchange = () => { refreshCodes(); render(); };
+  $("tbl").onclick = e => {
+    const tr = e.target.closest("tr[data-c]"); if (!tr || grupoAtual()) return;
+    $("f-codigo").value = $("f-codigo").value === tr.dataset.c ? "" : tr.dataset.c; render();
+  };
   // No anual, clicar num dia abre o mês dele.
   chart.on("click", e => {
     if (mensal()) return;
     $("f-visao").value = "mes"; $("f-mes").value = e.value[0].slice(5, 7); refreshCodes(); render();
   });
-  $("tbl").onclick = e => {
-    const tr = e.target.closest("tr[data-c]"); if (!tr) return;
-    $("f-codigo").value = $("f-codigo").value === tr.dataset.c ? "" : tr.dataset.c; render();
-  };
   await loadYear();
 }
 

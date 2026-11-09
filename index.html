@@ -53,6 +53,26 @@
   #tbl tr:hover { background: var(--empty); }
   #tbl tr.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
   .code { font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+
+  /* Cronologia do evento (visão mensal) */
+  .crono-resumo { display: flex; gap: 24px; flex-wrap: wrap; margin: 4px 0 12px; color: var(--text-2); }
+  .crono-resumo b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .crono-dias { display: grid; grid-template-columns: 56px 1fr; gap: 3px 8px; align-items: center; font-size: 12px;
+                font-variant-numeric: tabular-nums; margin-bottom: 16px; }
+  .crono-dias .eixo { position: relative; height: 14px; color: var(--muted); font-size: 11px; }
+  .crono-dias .eixo span { position: absolute; transform: translateX(-50%); }
+  .crono-dias .eixo span:first-child { transform: none; }
+  .crono-dias .eixo span:last-child { transform: translateX(-100%); }
+  .crono-dias .dia { color: var(--text-2); white-space: nowrap; }
+  .barra { position: relative; height: 14px; background: var(--empty); border-radius: 3px;
+           background-image: linear-gradient(to right, transparent calc(25% - 1px), var(--border) 25%, transparent calc(25% + 1px),
+             transparent calc(50% - 1px), var(--border) 50%, transparent calc(50% + 1px),
+             transparent calc(75% - 1px), var(--border) 75%, transparent calc(75% + 1px)); }
+  .barra i { position: absolute; top: 1px; bottom: 1px; min-width: 2px; border-radius: 2px; }
+  .barra i.aberto { opacity: .5; background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgb(255 255 255 / .55) 3px 6px); }
+  .barra u { position: absolute; top: -2px; bottom: -2px; width: 2px; text-decoration: none; }
+  #crono table td { white-space: nowrap; }
+  #crono table td.obs { white-space: normal; color: var(--text-2); }
   .tag { display: inline-block; font-size: 11px; color: var(--text-2); border: 1px solid var(--border);
          border-radius: 999px; padding: 0 6px; white-space: nowrap; }
   .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
@@ -145,6 +165,13 @@
       <thead><tr><th>Código</th><th>Mensagem</th><th class="n">Ocorrências</th><th class="n">Dias</th><th>Último dia</th></tr></thead>
       <tbody id="tbl"></tbody>
     </table>
+  </section>
+
+  <section class="card" id="crono" hidden>
+    <h2 id="crono-titulo">Cronologia do evento</h2>
+    <p class="hint">Cada “+” (início) é casado com o “−” (fim) seguinte. Barra tracejada = sem fim registrado até o último dado.
+      Linhas repetidas no mesmo segundo contam uma vez. Horário da máquina.</p>
+    <div id="crono-corpo"></div>
   </section>
 
   <footer id="foot"></footer>
@@ -400,7 +427,11 @@ function render() {
   $("f-codigo").disabled = !!gr;
   $("s-total-l").textContent = mes ? "ocorrências no mês" : "ocorrências no ano";
   $("t-codigos").textContent = (gr ? `Grupo “${gr.nome}”` : "Códigos") + (mes ? " no mês" : " no ano");
-  $("t-hint").hidden = !!gr;
+  if (gr && !gr.codigos.includes(cronoCod)) cronoCod = "";
+  $("t-hint").hidden = !!gr && !mes;
+  $("t-hint").textContent = gr ? "Clique num código para ver a cronologia dele (início, fim e duração) logo abaixo."
+    : "Clique num código para ver só ele no calendário; clique de novo para voltar a todos." +
+      (mes ? " Com um código escolhido, a cronologia aparece logo abaixo." : "");
   $("t-desc").hidden = !gr?.descricao;
   $("t-desc").textContent = gr?.descricao ?? "";
 
@@ -436,10 +467,110 @@ function render() {
   const sel = $("f-codigo").value;
   const lista = gr ? gr.codigos.map(c => [c, byCode.get(c)]) : [...byCode].sort((a, b) => b[1].total - a[1].total);
   $("tbl").innerHTML = lista.map(([c, v], i) =>
-    `<tr data-c="${c}" class="${!gr && c === sel ? "sel" : ""}"><td class="code">` +
+    `<tr data-c="${c}" class="${(gr ? mes && c === cronoCod : c === sel) ? "sel" : ""}"><td class="code">` +
     (gr ? `<span class="sw" style="background:${cor(i)}"></span>` : "") + `${c}</td><td>${esc(mensagens[c] ?? "")}${porFim.has(c) ? " " + NOTA_FIM : ""}</td>` +
     `<td class="n">${(v?.total ?? 0).toLocaleString("pt-BR")}</td><td class="n">${v?.dias.size ?? 0}</td><td>${v ? fmt(v.ultimo) : "–"}</td></tr>`
   ).join("") || `<tr><td colspan="5">Nenhuma ocorrência com esses filtros.</td></tr>`;
+  cronologia().catch(e => { $("crono-corpo").textContent = `Erro: ${e.message}`; });
+}
+
+// ---------- cronologia do evento (visão mensal, código escolhido) ----------
+
+let cronoCod = "", cronoChave = "", cronoRegs = null, ultimaHora = Date.now();
+const DIA_MS = 864e5;
+const p2 = n => String(n).padStart(2, "0");
+const isoLocal = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T00:00:00`;
+const hhmm = t => { const d = new Date(t); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+const ddhh = t => { const d = new Date(t); return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${hhmm(t)}`; };
+function duracao(ms) {
+  const min = Math.round(ms / 6e4), d = Math.floor(min / 1440), h = Math.floor(min % 1440 / 60), m = min % 60;
+  return (d ? `${d} d ` : "") + (d || h ? `${h} h ` : "") + `${p2(m)} min`;
+}
+
+// Casa cada "+" com o "−" seguinte. "+" com o evento já aberto não abre outro (conta como início repetido).
+function pareia(regs) {
+  const out = [], vistos = new Set();
+  let aberto = null;
+  for (const r of regs) {
+    if (vistos.has(r.status + r.hora)) continue;  // o LiDAT repete linhas idênticas
+    vistos.add(r.status + r.hora);
+    const t = new Date(r.hora).getTime();
+    if (r.status === "+") { if (aberto) aberto.repetidos++; else aberto = { ini: t, fim: null, repetidos: 0 }; }
+    else if (aberto) { aberto.fim = t; out.push(aberto); aberto = null; }
+    else out.push({ ini: null, fim: t, repetidos: 0 });  // fim sem início registrado
+  }
+  if (aberto) out.push(aberto);
+  return out;
+}
+
+async function cronologia() {
+  const gr = grupoAtual(), c = mensal() ? (gr ? cronoCod : $("f-codigo").value) : "";
+  $("crono").hidden = !c;
+  if (!c) return;
+  const p = periodo(), grua = $("f-grua").value, chave = `${c}|${grua}|${p}`;
+  if (chave !== cronoChave) {
+    cronoChave = chave; cronoRegs = null;
+    $("crono-titulo").textContent = `Cronologia do evento ${c}`;
+    $("crono-corpo").textContent = "Carregando…";
+    // Uma semana de margem antes e depois do mês, para casar eventos que atravessam a virada do mês.
+    const [y, m] = p.split("-").map(Number);
+    const regs = await api(`evento?select=grua,status,hora&codigo=eq.${c}` + (grua ? `&grua=eq.${encodeURIComponent(grua)}` : "") +
+      `&hora=gte.${isoLocal(new Date(y, m - 1, -6))}&hora=lt.${isoLocal(new Date(y, m, 8))}&order=hora`);
+    if (cronoChave !== chave) return;  // o usuário já mudou de código ou de mês
+    cronoRegs = regs;
+  }
+  if (cronoRegs) desenhaCrono(c, p, cronoRegs, gr);
+}
+
+function desenhaCrono(c, p, regs, gr) {
+  const [y, m] = p.split("-").map(Number), ini0 = new Date(y, m - 1, 1).getTime(), fim0 = new Date(y, m, 1).getTime();
+  const corC = gr ? cor(gr.codigos.indexOf(c)) : css("--accent"), soFim = porFim.has(c);
+  const gruas = [...new Set(regs.map(r => r.grua))].sort();
+  $("crono-titulo").textContent = `Cronologia do evento ${c}${mensagens[c] ? " · " + mensagens[c] : ""}`;
+  if (!gruas.length) return $("crono-corpo").textContent = "Nenhum registro deste código no mês.";
+
+  $("crono-corpo").innerHTML = gruas.map(g => {
+    const todos = pareia(regs.filter(r => r.grua === g));
+    const fimDe = x => x.fim ?? Math.max(ultimaHora, x.ini);
+    const doMes = todos.filter(x => (x.ini ?? x.fim) < fim0 && fimDe(x) >= ini0);
+    const fechados = doMes.filter(x => x.ini != null && x.fim != null);
+    const total = fechados.reduce((s, x) => s + x.fim - x.ini, 0);
+    const maior = fechados.reduce((a, x) => Math.max(a, x.fim - x.ini), 0);
+
+    // Uma barra de 0 a 24 h por dia do mês (até o último dado); o que atravessa a meia-noite aparece nos dois dias.
+    const nDias = Math.min(new Date(y, m, 0).getDate(), Math.ceil((ultimaHora - ini0) / DIA_MS));
+    let dias = `<span></span><div class="eixo"><span style="left:0">0 h</span><span style="left:25%">6 h</span>` +
+               `<span style="left:50%">12 h</span><span style="left:75%">18 h</span><span style="left:100%">24 h</span></div>`;
+    for (let d = 0; d < nDias; d++) {
+      const d0 = new Date(y, m - 1, d + 1).getTime(), d1 = new Date(y, m - 1, d + 2).getTime();
+      const marcas = doMes.map(x => {
+        if (x.ini == null) return x.fim >= d0 && x.fim < d1
+          ? `<u style="left:${(x.fim - d0) / (d1 - d0) * 100}%;background:${corC}" title="${soFim ? "registro (−)" : "fim sem início registrado"} ${hhmm(x.fim)}"></u>` : "";
+        const a = Math.max(x.ini, d0), b = Math.min(fimDe(x), d1);
+        if (b <= a && !(x.ini >= d0 && x.ini < d1)) return "";
+        const tip = `${ddhh(x.ini)} → ${x.fim ? ddhh(x.fim) + " (" + duracao(x.fim - x.ini) + ")" : "sem fim registrado"}`;
+        return `<i class="${x.fim ? "" : "aberto"}" style="left:${(a - d0) / (d1 - d0) * 100}%;width:${Math.max(0, b - a) / (d1 - d0) * 100}%;background-color:${corC}" title="${tip}"></i>`;
+      }).join("");
+      const wd = DIAS[new Date(d0).getDay()];
+      dias += `<span class="dia">${p2(d + 1)} ${wd}</span><div class="barra">${marcas}</div>`;
+    }
+
+    const linhas = doMes.map(x => {
+      const obs = [];
+      if (x.ini == null) obs.push(soFim ? "registro “−” (este código não tem início)" : "fim sem início registrado");
+      if (x.ini != null && x.fim == null) obs.push("sem fim registrado até o último dado");
+      if (x.repetidos) obs.push(`início (+) repetido ${x.repetidos}× antes do fim`);
+      if (x.ini != null && x.fim != null && new Date(x.ini).toDateString() !== new Date(x.fim).toDateString()) obs.push("atravessa a meia-noite");
+      return `<tr><td>${x.ini != null ? ddhh(x.ini) : "–"}</td><td>${x.fim != null ? ddhh(x.fim) : "–"}</td>` +
+             `<td class="n">${x.ini != null && x.fim != null ? duracao(x.fim - x.ini) : "–"}</td><td class="obs">${obs.join("; ")}</td></tr>`;
+    }).join("");
+
+    return (gruas.length > 1 ? `<h3 style="margin:12px 0 4px">${esc(g)}</h3>` : "") +
+      `<div class="crono-resumo"><span><b>${doMes.length}</b> ocorrência(s) no mês</span>` +
+      (fechados.length ? `<span>duração total <b>${duracao(total)}</b></span><span>maior <b>${duracao(maior)}</b></span>` : "") + `</div>` +
+      `<div class="crono-dias">${dias}</div>` +
+      `<table><thead><tr><th>Início (+)</th><th>Fim (−)</th><th class="n">Duração</th><th>Observação</th></tr></thead><tbody>${linhas}</tbody></table>`;
+  }).join("");
 }
 
 async function loadYear() {
@@ -675,6 +806,7 @@ async function init() {
   const y1 = last ? +last.hora.slice(0, 4) : y0;
   const anos = []; for (let y = y1; y >= y0; y--) anos.push([String(y), String(y)]);
   opt($("f-ano"), anos);
+  if (last) ultimaHora = new Date(last.hora).getTime();
   if (last) $("foot").textContent = `Último evento registrado: ${fmt(last.hora.slice(0, 10))} ${last.hora.slice(11, 19)}.`;
   for (const r of await api("codigo?select=codigo,mensagem")) mensagens[r.codigo] = r.mensagem;
   // Catálogo para as sugestões: por ora, os códigos que já apareceram nos dados (descrição em inglês do LiDAT).
@@ -686,7 +818,8 @@ async function init() {
   $("f-codigo").onchange = render;
   $("f-visao").onchange = $("f-mes").onchange = () => { refreshCodes(); render(); };
   $("tbl").onclick = e => {
-    const tr = e.target.closest("tr[data-c]"); if (!tr || grupoAtual()) return;
+    const tr = e.target.closest("tr[data-c]"); if (!tr) return;
+    if (grupoAtual()) { if (mensal()) { cronoCod = cronoCod === tr.dataset.c ? "" : tr.dataset.c; render(); } return; }
     $("f-codigo").value = $("f-codigo").value === tr.dataset.c ? "" : tr.dataset.c; render();
   };
   // No anual, clicar num dia abre o mês dele.

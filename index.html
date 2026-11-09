@@ -139,6 +139,7 @@
 
   <section class="card">
     <h2 id="t-codigos">Códigos no ano</h2>
+    <p class="hint" id="t-desc" hidden style="color:var(--text-2);font-size:13px"></p>
     <p class="hint" id="t-hint">Clique num código para ver só ele no calendário; clique de novo para voltar a todos.</p>
     <table>
       <thead><tr><th>Código</th><th>Mensagem</th><th class="n">Ocorrências</th><th class="n">Dias</th><th>Último dia</th></tr></thead>
@@ -153,7 +154,9 @@
   <h2>Grupos de eventos</h2>
   <ul id="g-lista"></ul>
   <h3 id="g-titulo">Novo grupo</h3>
-  <label>Nome do grupo <input id="g-nome" maxlength="60" placeholder="Ex.: Vento forte" autocomplete="off"></label>
+  <label>Nome do grupo <input id="g-nome" maxlength="60" placeholder="Ex.: Vento forte + cata-vento" autocomplete="off"></label>
+  <label style="margin-top:8px">Descrição (finalidade do grupo, opcional)
+    <input id="g-desc" maxlength="200" placeholder="Ex.: Agrupa eventos de ventos fortes com liberação de lança." autocomplete="off"></label>
   <div id="g-chips"></div>
   <label>Adicionar código <input id="g-busca" placeholder="Digite o código (W56…) ou parte da descrição (vento, wind…)" autocomplete="off"></label>
   <ul id="g-sug" class="sug"></ul>
@@ -398,6 +401,8 @@ function render() {
   $("s-total-l").textContent = mes ? "ocorrências no mês" : "ocorrências no ano";
   $("t-codigos").textContent = (gr ? `Grupo “${gr.nome}”` : "Códigos") + (mes ? " no mês" : " no ano");
   $("t-hint").hidden = !!gr;
+  $("t-desc").hidden = !gr?.descricao;
+  $("t-desc").textContent = gr?.descricao ?? "";
 
   const byDay = new Map(), byCode = new Map(), byDayCode = new Map();
   for (const r of data) {
@@ -466,7 +471,7 @@ async function rpc(fn, body) {
 }
 
 async function carregaGrupos() {
-  const db = (await api("grupo?select=id,nome,codigos&order=nome")).map(g => ({ ...g, nome: g.nome.trim() }));
+  const db = (await api("grupo?select=id,nome,codigos,descricao&order=nome")).map(g => ({ ...g, nome: g.nome.trim() }));
   const nomes = new Set(db.map(g => g.nome.toLowerCase()));
   const locais = lerLocal(KEY_LOCAIS, []).filter(g => !nomes.has(g.nome.toLowerCase())).map(g => ({ ...g, local: true }));
   grupos = [...db, ...locais].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
@@ -528,6 +533,7 @@ function renderLista() {
   $("g-locais").textContent = `${n} grupo(s) estão só neste navegador; serão enviados para a equipe quando você salvar.`;
   $("g-lista").innerHTML = grupos.map((g, gi) => `<li><b>${esc(g.nome)}</b>` +
     (g.local ? `<span class="tag">só neste navegador</span>` : "") +
+    (g.descricao ? `<small style="flex-basis:100%;color:var(--text-2);order:9">${esc(g.descricao)}</small>` : "") +
     g.codigos.map((c, i) => `<span class="chip" style="background:${cor(i)};color:${TXT(cor(i))}">${c}</span>`).join("") +
     `<span class="acts"><button type="button" data-ed="${gi}">Editar</button><button type="button" data-del="${gi}">Excluir</button></span></li>`
   ).join("") || `<li style="color:var(--muted)">Nenhum grupo criado ainda.</li>`;
@@ -536,7 +542,7 @@ function renderLista() {
 function formGrupo(g) {
   editando = g ? g.nome : null; escolhidos = g ? [...g.codigos] : [];
   $("g-titulo").textContent = g ? `Editar “${g.nome}”` : "Novo grupo";
-  $("g-nome").value = g ? g.nome : ""; $("g-busca").value = ""; $("g-msg").textContent = "";
+  $("g-nome").value = g ? g.nome : ""; $("g-desc").value = g?.descricao ?? ""; $("g-busca").value = ""; $("g-msg").textContent = "";
   renderChips(); acGrupo.render();
 }
 
@@ -555,7 +561,7 @@ async function depoisDeGravar(cred, manter) {
   gravarLocal(KEY_EQUIPE, { usuario: cred.p_usuario, senha: cred.p_senha });
   // Envia os grupos antigos do navegador (os de nome repetido ficam de fora: vale o da equipe).
   for (const g of grupos.filter(g => g.local)) {
-    try { await rpc("salvar_grupo", { ...cred, p_nome: g.nome, p_codigos: g.codigos }); }
+    try { await rpc("salvar_grupo", { ...cred, p_nome: g.nome, p_codigos: g.codigos, p_id: null, p_descricao: null }); }
     catch (e) { if (!/nome/.test(e.message)) throw e; }
   }
   gravarLocal(KEY_LOCAIS, null);
@@ -569,7 +575,7 @@ async function salvar() {
     if (!escolhidos.length) throw new Error("Adicione pelo menos um código.");
     const cred = equipe(), atual = grupos.find(g => g.nome === editando);
     botao.disabled = true; msg.textContent = "";
-    await rpc("salvar_grupo", { ...cred, p_nome: nome, p_codigos: escolhidos,
+    await rpc("salvar_grupo", { ...cred, p_nome: nome, p_codigos: escolhidos, p_descricao: $("g-desc").value.trim(),
                                 p_id: atual && !atual.local ? atual.id : null });
     if (atual?.local) gravarLocal(KEY_LOCAIS, lerLocal(KEY_LOCAIS, []).filter(g => g.nome !== atual.nome));
     await depoisDeGravar(cred, nome);

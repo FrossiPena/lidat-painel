@@ -157,6 +157,12 @@
   <div id="g-chips"></div>
   <label>Adicionar código <input id="g-busca" placeholder="Digite o código (W56…) ou parte da descrição (vento, wind…)" autocomplete="off"></label>
   <ul id="g-sug" class="sug"></ul>
+  <h3>Acesso da equipe <small style="font-weight:400;color:var(--muted)">(para salvar ou excluir; ver é livre)</small></h3>
+  <div class="row" style="margin-top:0">
+    <label style="flex:1">Usuário <input id="g-usuario" autocomplete="username"></label>
+    <label style="flex:1">Senha <input id="g-senha" type="password" autocomplete="current-password"></label>
+  </div>
+  <p id="g-locais" class="hint" hidden style="color:var(--text-2);font-size:12px;margin:8px 0 0"></p>
   <p id="g-msg"></p>
   <div class="row">
     <button type="button" class="primary" id="g-salvar">Salvar grupo</button>
@@ -164,7 +170,7 @@
     <span class="sp"></span>
     <button type="button" id="g-fechar">Fechar</button>
   </div>
-  <p class="hint" style="color:var(--muted);font-size:12px;margin:12px 0 0">Os grupos ficam salvos neste navegador; em outro computador ou celular é preciso criá-los de novo.</p>
+  <p class="hint" style="color:var(--muted);font-size:12px;margin:12px 0 0">Os grupos são da equipe: aparecem para todos, em qualquer computador ou celular. O usuário e a senha ficam lembrados neste navegador.</p>
 </dialog>
 
 <button id="b-docs" type="button" aria-controls="docs" aria-expanded="false">📚 Documentação</button>
@@ -442,11 +448,29 @@ async function loadYear() {
   $("status").textContent = "";
 }
 
-// ---------- grupos (salvos no navegador) ----------
+// ---------- grupos da equipe (Supabase; salvar/excluir pedem usuário e senha da equipe) ----------
 
-const KEY = "lidat.grupos";
-function carregaGrupos() { try { grupos = JSON.parse(localStorage.getItem(KEY)) || []; } catch { grupos = []; } }
-function salvaGrupos() { try { localStorage.setItem(KEY, JSON.stringify(grupos)); return true; } catch { return false; } }
+// Grupos antigos, de quando ficavam só no navegador: aparecem até serem enviados ao Supabase.
+const KEY_LOCAIS = "lidat.grupos", KEY_EQUIPE = "lidat.equipe";
+const lerLocal = (k, def) => { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } };
+const gravarLocal = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+async function rpc(fn, body) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, { method: "POST", body: JSON.stringify(body),
+    headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" } });
+  if (r.ok) return r.status === 204 ? null : r.json();
+  const e = await r.json().catch(() => ({}));
+  if (e.code === "28P01") { gravarLocal(KEY_EQUIPE, null); throw new Error("Usuário ou senha da equipe incorretos."); }
+  if (e.code === "23505") throw new Error("Já existe um grupo com esse nome.");
+  throw new Error(e.message || `HTTP ${r.status}`);
+}
+
+async function carregaGrupos() {
+  const db = (await api("grupo?select=id,nome,codigos&order=nome")).map(g => ({ ...g, nome: g.nome.trim() }));
+  const nomes = new Set(db.map(g => g.nome.toLowerCase()));
+  const locais = lerLocal(KEY_LOCAIS, []).filter(g => !nomes.has(g.nome.toLowerCase())).map(g => ({ ...g, local: true }));
+  grupos = [...db, ...locais].sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
 const refreshGrupos = keep => opt($("f-grupo"), [["", "Nenhum"], ...grupos.map(g => [g.nome, g.nome])], keep);
 
 // ---------- autocompletar de códigos (grupos e busca na documentação) ----------
@@ -499,7 +523,11 @@ function renderChips() {
 }
 
 function renderLista() {
+  const n = grupos.filter(g => g.local).length;
+  $("g-locais").hidden = !n;
+  $("g-locais").textContent = `${n} grupo(s) estão só neste navegador; serão enviados para a equipe quando você salvar.`;
   $("g-lista").innerHTML = grupos.map((g, gi) => `<li><b>${esc(g.nome)}</b>` +
+    (g.local ? `<span class="tag">só neste navegador</span>` : "") +
     g.codigos.map((c, i) => `<span class="chip" style="background:${cor(i)};color:${TXT(cor(i))}">${c}</span>`).join("") +
     `<span class="acts"><button type="button" data-ed="${gi}">Editar</button><button type="button" data-del="${gi}">Excluir</button></span></li>`
   ).join("") || `<li style="color:var(--muted)">Nenhum grupo criado ainda.</li>`;
@@ -517,20 +545,54 @@ function adiciona(c) {
   escolhidos.push(c); renderChips();
 }
 
-function salvar() {
-  const nome = $("g-nome").value.trim();
-  if (!nome) return $("g-msg").textContent = "Dê um nome ao grupo.";
-  if (!escolhidos.length) return $("g-msg").textContent = "Adicione pelo menos um código.";
-  if (grupos.some(g => g.nome === nome && g.nome !== editando)) return $("g-msg").textContent = "Já existe um grupo com esse nome.";
-  const novo = { nome, codigos: [...escolhidos] }, i = grupos.findIndex(g => g.nome === editando);
-  if (i >= 0) grupos[i] = novo; else grupos.push(novo);
-  grupos.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
-  if (!salvaGrupos()) return $("g-msg").textContent = "Este navegador não permite salvar (modo anônimo?).";
-  refreshGrupos(nome); $("dlg").close(); refreshCodes(); render();
+function equipe() {
+  const usuario = $("g-usuario").value.trim(), senha = $("g-senha").value;
+  if (!usuario || !senha) throw new Error("Preencha o usuário e a senha da equipe.");
+  return { p_usuario: usuario, p_senha: senha };
 }
 
-function initGrupos() {
-  carregaGrupos(); refreshGrupos("");
+async function depoisDeGravar(cred, manter) {
+  gravarLocal(KEY_EQUIPE, { usuario: cred.p_usuario, senha: cred.p_senha });
+  // Envia os grupos antigos do navegador (os de nome repetido ficam de fora: vale o da equipe).
+  for (const g of grupos.filter(g => g.local)) {
+    try { await rpc("salvar_grupo", { ...cred, p_nome: g.nome, p_codigos: g.codigos }); }
+    catch (e) { if (!/nome/.test(e.message)) throw e; }
+  }
+  gravarLocal(KEY_LOCAIS, null);
+  await carregaGrupos(); refreshGrupos(manter); renderLista(); refreshCodes(); render();
+}
+
+async function salvar() {
+  const nome = $("g-nome").value.trim(), msg = $("g-msg"), botao = $("g-salvar");
+  try {
+    if (!nome) throw new Error("Dê um nome ao grupo.");
+    if (!escolhidos.length) throw new Error("Adicione pelo menos um código.");
+    const cred = equipe(), atual = grupos.find(g => g.nome === editando);
+    botao.disabled = true; msg.textContent = "";
+    await rpc("salvar_grupo", { ...cred, p_nome: nome, p_codigos: escolhidos,
+                                p_id: atual && !atual.local ? atual.id : null });
+    if (atual?.local) gravarLocal(KEY_LOCAIS, lerLocal(KEY_LOCAIS, []).filter(g => g.nome !== atual.nome));
+    await depoisDeGravar(cred, nome);
+    $("dlg").close();
+  } catch (e) { msg.textContent = e.message; }
+  finally { botao.disabled = false; }
+}
+
+async function excluir(g) {
+  if (!confirm(`Excluir o grupo “${g.nome}” para toda a equipe?`)) return;
+  const msg = $("g-msg");
+  try {
+    if (g.local) gravarLocal(KEY_LOCAIS, lerLocal(KEY_LOCAIS, []).filter(x => x.nome !== g.nome));
+    else { const cred = equipe(); await rpc("apagar_grupo", { ...cred, p_id: g.id }); gravarLocal(KEY_EQUIPE, { usuario: cred.p_usuario, senha: cred.p_senha }); }
+    if (editando === g.nome) formGrupo(null);
+    await carregaGrupos(); refreshGrupos(); renderLista(); refreshCodes(); render();
+  } catch (e) { msg.textContent = e.message; }
+}
+
+async function initGrupos() {
+  await carregaGrupos(); refreshGrupos("");
+  const salvo = lerLocal(KEY_EQUIPE, null);
+  if (salvo) { $("g-usuario").value = salvo.usuario; $("g-senha").value = salvo.senha; }
   acGrupo = autocompletar($("g-busca"), $("g-sug"), () => escolhidos, adiciona);
   $("f-grupo").onchange = () => { refreshCodes(); render(); };
   $("f-estilo").onchange = render;
@@ -545,13 +607,7 @@ function initGrupos() {
   $("g-lista").onclick = e => {
     const ed = e.target.closest("[data-ed]"), del = e.target.closest("[data-del]");
     if (ed) { formGrupo(grupos[+ed.dataset.ed]); $("g-nome").focus(); }
-    if (del) {
-      const g = grupos[+del.dataset.del];
-      if (!confirm(`Excluir o grupo “${g.nome}”?`)) return;
-      grupos.splice(+del.dataset.del, 1); salvaGrupos(); renderLista();
-      if (editando === g.nome) formGrupo(null);
-      refreshGrupos(); refreshCodes(); render();
-    }
+    if (del) excluir(grupos[+del.dataset.del]);
   };
 }
 
@@ -618,7 +674,7 @@ async function init() {
   // Catálogo para as sugestões: por ora, os códigos que já apareceram nos dados (descrição em inglês do LiDAT).
   catalogo = Object.entries(mensagens).sort().map(([codigo, en]) => ({ codigo, en, pt: "", busca: norm(`${en}`) }));
 
-  initGrupos(); initDocs();
+  await initGrupos(); initDocs();
   $("f-ano").onchange = () => loadYear().catch(fail);
   $("f-grua").onchange = $("f-tipo").onchange = () => { refreshCodes(); render(); };
   $("f-codigo").onchange = render;

@@ -102,6 +102,7 @@
   .sug li:last-child { border-bottom: 0; }
   .sug li:hover, .sug li.on { background: var(--empty); }
   .sug li small { display: block; color: var(--text-2); }
+  small.pt { display: block; color: var(--text-2); font-size: 12px; margin-top: 1px; }
   .sug li.info { cursor: default; color: var(--muted); font-size: 12px; }
 
   /* Busca na documentação (painel lateral) */
@@ -251,7 +252,9 @@ const cor = i => CORES[i % CORES.length];
 const OPAC = [0.3, 0.45, 0.62, 0.8, 1];      // degradê: opacidade por faixa
 const RAIO = [0.4, 0.55, 0.7, 0.85, 1];      // círculos: diâmetro (fração da célula) por faixa
 
-let rows = [], mensagens = {}, catalogo = [], grupos = [], chart;
+let rows = [], mensagens = {}, traducoes = {}, catalogo = [], grupos = [], chart;
+// Texto do LiDAT (inglês, como exportado) em destaque; a tradução PT (tabela traducao) vai embaixo, menor.
+const descTexto = c => [mensagens[c], traducoes[c]].filter(Boolean).join("\n");
 const modelos = new Map();  // grua -> modelo ("Crane type" do relatório, ex.: 630 EC-H 40)
 let porFim = new Set();  // códigos que nunca têm "+" e por isso são contados pelo "−" (ex.: M569)
 const marca = c => porFim.has(c) ? " ⁻" : "";
@@ -475,7 +478,8 @@ function render() {
   const lista = gr ? gr.codigos.map(c => [c, byCode.get(c)]) : [...byCode].sort((a, b) => b[1].total - a[1].total);
   $("tbl").innerHTML = lista.map(([c, v], i) =>
     `<tr data-c="${c}" class="${(gr ? mes && c === cronoCod : c === sel) ? "sel" : ""}"><td class="code">` +
-    (gr ? `<span class="sw" style="background:${cor(i)}"></span>` : "") + `${c}</td><td>${esc(mensagens[c] ?? "")}${porFim.has(c) ? " " + NOTA_FIM : ""}</td>` +
+    (gr ? `<span class="sw" style="background:${cor(i)}"></span>` : "") + `${c}</td><td>${esc(mensagens[c] ?? "")}${porFim.has(c) ? " " + NOTA_FIM : ""}` +
+    `${traducoes[c] ? `<small class="pt">${esc(traducoes[c])}</small>` : ""}</td>` +
     `<td class="n">${(v?.total ?? 0).toLocaleString("pt-BR")}</td><td class="n">${v?.dias.size ?? 0}</td><td>${v ? fmt(v.ultimo) : "–"}</td></tr>`
   ).join("") || `<tr><td colspan="5">Nenhuma ocorrência com esses filtros.</td></tr>`;
   cronologia().catch(e => { $("crono-corpo").textContent = `Erro: ${e.message}`; });
@@ -557,7 +561,8 @@ function desenhaCrono(c, p, regs, gr) {
   const [y, m] = p.split("-").map(Number), ini0 = new Date(y, m - 1, 1).getTime(), fim0 = new Date(y, m, 1).getTime();
   const corC = gr ? cor(gr.codigos.indexOf(c)) : css("--accent"), soFim = porFim.has(c);
   const gruas = [...new Set(regs.map(r => r.grua))].sort();
-  $("crono-titulo").textContent = `Cronologia do evento ${c}${mensagens[c] ? " · " + mensagens[c] : ""}`;
+  $("crono-titulo").innerHTML = `Cronologia do evento ${c}${mensagens[c] ? " · " + esc(mensagens[c]) : ""}` +
+    (traducoes[c] ? `<small class="pt" style="font-weight:400">${esc(traducoes[c])}</small>` : "");
   if (!gruas.length) return $("crono-corpo").textContent = "Nenhum registro deste código no mês.";
 
   $("crono-corpo").innerHTML = gruas.map(g => {
@@ -677,7 +682,7 @@ const refreshGrupos = keep => opt($("f-grupo"), [["", "Nenhum"], ...grupos.map(g
 
 // ---------- autocompletar de códigos (grupos e busca na documentação) ----------
 
-const CODIGO_RE = /^[A-Z]\d{1,4}$/;
+const CODIGO_RE = /^[A-Z]\d{1,5}$/;
 
 function sugestoes(q, excluidos) {
   const qn = norm(q.trim());
@@ -696,7 +701,7 @@ function autocompletar(input, lista, excluidos, escolher) {
     const q = input.value, { itens, resto } = sugestoes(q, excluidos());
     ativo = Math.min(ativo, Math.max(0, itens.length - 1));
     let html = itens.map((x, i) => `<li data-c="${x.codigo}" class="${i === ativo ? "on" : ""}"><span class="code">${x.codigo}</span> ` +
-      `${esc(x.en || "")}${x.pt ? `<small>${esc(x.pt)}</small>` : ""}</li>`).join("");
+      `${esc(x.en || x.pt)}${x.en && x.pt ? `<small>${esc(x.pt)}</small>` : ""}</li>`).join("");
     if (resto) html += `<li class="info">+ ${resto} outro(s) — continue digitando para filtrar</li>`;
     if (q.trim() && !itens.length) html = `<li class="info">Nenhum código encontrado.` +
       (CODIGO_RE.test(q.trim().toUpperCase()) ? ` Dá para incluir ${esc(q.trim().toUpperCase())} assim mesmo.` : "") + `</li>`;
@@ -720,7 +725,7 @@ let editando = null, escolhidos = [], acGrupo;
 
 function renderChips() {
   $("g-chips").innerHTML = escolhidos.map((c, i) =>
-    `<span class="chip" style="background:${cor(i)};color:${TXT(cor(i))}" title="${esc(mensagens[c] ?? "")}">${c}` +
+    `<span class="chip" style="background:${cor(i)};color:${TXT(cor(i))}" title="${esc(descTexto(c))}">${c}` +
     `<button type="button" data-rm="${c}" aria-label="Remover ${c}">×</button></span>`).join("");
 }
 
@@ -834,7 +839,7 @@ function montaTexto(forcar = true) {
                `pesquise pelas possíveis causas e soluções propostas.`;
   if (forcar || $("d-texto").value === textoGerado) $("d-texto").value = novo;
   textoGerado = novo;
-  $("d-chips").innerHTML = docCodigos.map(c => `<span class="chip" title="${esc(mensagens[c] ?? "")}">${c}` +
+  $("d-chips").innerHTML = docCodigos.map(c => `<span class="chip" title="${esc(descTexto(c))}">${c}` +
     `<button type="button" data-rm="${c}" aria-label="Remover ${c}">×</button></span>`).join("");
 }
 
@@ -872,8 +877,9 @@ async function init() {
   opt($("f-tipo"), [["", "Todos"], ...Object.entries(TIPOS)]);
   // Na abertura só o leve: lista de gruas, mensagens dos códigos e grupos, tudo ao mesmo tempo.
   // Os eventos só vêm depois que a grua é escolhida.
-  const [gs, cods] = await Promise.all([api("grua?select=grua,modelo,primeiro,ultimo&order=grua"),
-                                        api("codigo?select=codigo,mensagem"), initGrupos()]);
+  const [gs, cods, trs] = await Promise.all([api("grua?select=grua,modelo,primeiro,ultimo&order=grua"),
+                                             api("codigo?select=codigo,mensagem"), api("traducao?select=codigo,pt"),
+                                             initGrupos()]);
   gruasInfo = gs;
   for (const x of gs) if (x.modelo) modelos.set(x.grua, x.modelo);
   const lembrada = lerLocal(KEY_GRUA, "");
@@ -881,8 +887,12 @@ async function init() {
                     ["*", "TODAS (mais lento)"]], lembrada);
   refreshAnos();
   for (const r of cods) mensagens[r.codigo] = r.mensagem;
-  // Catálogo para as sugestões: por ora, os códigos que já apareceram nos dados (descrição em inglês do LiDAT).
-  catalogo = Object.entries(mensagens).sort().map(([codigo, en]) => ({ codigo, en, pt: "", busca: norm(`${en}`) }));
+  for (const r of trs) traducoes[r.codigo] = r.pt;
+  // Catálogo para as sugestões: códigos já vistos nos dados (texto do LiDAT) + os da tabela de tradução (PT).
+  catalogo = [...new Set([...Object.keys(mensagens), ...Object.keys(traducoes)])].sort().map(codigo => {
+    const en = mensagens[codigo] ?? "", pt = traducoes[codigo] ?? "";
+    return { codigo, en, pt, busca: norm(`${en} ${pt}`) };
+  });
 
   initDocs();
   const carrega = () => loadDados().catch(fail);

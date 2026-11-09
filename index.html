@@ -294,12 +294,10 @@ function filtered(ignoreCode = false) {
     (gr ? gr.codigos.includes(r.codigo) : ignoreCode || !c || r.codigo === c));
 }
 
-// Meses do ano; o padrão é o último mês com ocorrência (ou o mês atual, se for o ano corrente).
+// Meses do ano; o padrão é o mês do último evento da grua (em anos anteriores, dezembro).
 function refreshMonths() {
-  const ano = $("f-ano").value, hoje = new Date();
-  const ult = rows.reduce((m, r) => r.dia > m ? r.dia : m, "");
-  const def = ano === String(hoje.getFullYear()) ? String(hoje.getMonth() + 1).padStart(2, "0")
-            : ult ? ult.slice(5, 7) : "01";
+  const g = gruaSel(), ult = gruasInfo.filter(x => !g || x.grua === g).map(x => x.ultimo).sort().pop() || "";
+  const def = $("f-ano").value === ult.slice(0, 4) ? ult.slice(5, 7) : "12";
   opt($("f-mes"), MESES_LONGOS.map((m, i) => [String(i + 1).padStart(2, "0"), m]), def);
 }
 
@@ -625,22 +623,30 @@ function refreshAnos() {
   $("foot").textContent = `Último evento registrado${g ? " da " + g : ""}: ${fmt(ult.slice(0, 10))} ${ult.slice(11, 19)}.`;
 }
 
-async function loadYear() {
-  const g = $("f-grua").value, ano = $("f-ano").value;
+// Busca só o necessário: na visão mensal, o mês; na anual, o ano inteiro. Se o ano já está carregado,
+// trocar de mês dentro dele não busca nada. carregado = "GT-27|2026-07" (um mês) ou "GT-27|2026" (o ano).
+let carregado = "";
+async function loadDados() {
+  const g = $("f-grua").value, ano = $("f-ano").value, mes = mensal(), p = periodo();
   if (!g) {
-    rows = []; render();
+    rows = []; carregado = ""; render();
     $("status").textContent = "Escolha uma grua (ou TODAS) para carregar os dados."; $("status").className = "";
     return;
   }
   gravarLocal(KEY_GRUA, g);
+  const chave = `${g}|${mes ? p : ano}`;
+  if (carregado === chave || carregado === `${g}|${ano}`) { refreshCodes(); render(); return; }
   $("status").textContent = "Carregando…"; $("status").className = "";
-  const pedido = pedidoAtual = `${g}|${ano}`;
+  const pedido = pedidoAtual = chave;
+  const [y, m] = p.split("-").map(Number);
+  const faixa = mes ? `dia=gte.${p}-01&dia=lt.${m === 12 ? y + 1 : y}-${p2(m === 12 ? 1 : m + 1)}-01`
+                    : `dia=gte.${ano}-01-01&dia=lte.${ano}-12-31`;
   const filtro = g === "*" ? "" : `&grua=eq.${encodeURIComponent(g)}`;
-  const dados = await api(`evento_dia?select=grua,codigo,tipo,dia,qtd,contado&dia=gte.${ano}-01-01&dia=lte.${ano}-12-31${filtro}&order=dia,grua,codigo`);
-  if (pedido !== pedidoAtual) return;  // o usuário trocou de grua ou de ano no meio
-  rows = dados;
+  const dados = await api(`evento_dia?select=grua,codigo,tipo,dia,qtd,contado&${faixa}${filtro}&order=dia,grua,codigo`);
+  if (pedido !== pedidoAtual) return;  // o usuário trocou de grua, ano ou mês no meio
+  rows = dados; carregado = chave;
   porFim = new Set(rows.filter(r => r.contado === "-").map(r => r.codigo));
-  refreshMonths(); refreshCodes(); render();
+  refreshCodes(); render();
   $("status").textContent = "";
 }
 
@@ -879,11 +885,12 @@ async function init() {
   catalogo = Object.entries(mensagens).sort().map(([codigo, en]) => ({ codigo, en, pt: "", busca: norm(`${en}`) }));
 
   initDocs();
-  $("f-ano").onchange = () => loadYear().catch(fail);
-  $("f-grua").onchange = () => { refreshAnos(); loadYear().catch(fail); };
+  const carrega = () => loadDados().catch(fail);
+  $("f-ano").onchange = () => { refreshMonths(); carrega(); };
+  $("f-grua").onchange = () => { refreshAnos(); refreshMonths(); carrega(); };
   $("f-tipo").onchange = () => { refreshCodes(); render(); };
   $("f-codigo").onchange = render;
-  $("f-visao").onchange = $("f-mes").onchange = () => { refreshCodes(); render(); };
+  $("f-visao").onchange = $("f-mes").onchange = carrega;
   $("tbl").onclick = e => {
     const tr = e.target.closest("tr[data-c]"); if (!tr) return;
     cronoDia = "";
@@ -893,9 +900,11 @@ async function init() {
   // No anual, clicar num dia abre o mês dele.
   chart.on("click", e => {
     if (mensal()) return cliqueMes(e);
-    $("f-visao").value = "mes"; $("f-mes").value = e.value[0].slice(5, 7); refreshCodes(); render();
+    $("f-visao").value = "mes"; $("f-mes").value = e.value[0].slice(5, 7); carrega();  // o ano já está carregado
   });
-  await loadYear();
+  // Abre na visão mensal, no mês do último evento da grua (o foco da análise do dia a dia).
+  $("f-visao").value = "mes"; refreshMonths();
+  await loadDados();
 }
 
 function fail(e) { $("status").textContent = `Erro: ${e.message}`; $("status").className = "err"; console.error(e); }

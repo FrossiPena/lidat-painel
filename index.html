@@ -462,7 +462,7 @@ function render() {
   chart.resize();
   chart.setOption({ tooltip: tooltip(byDay, gr), ...option }, true);
   $("leg").innerHTML = legenda(gr, mes);
-  if (docCodigos.length) montaTexto();  // o modelo muda com o filtro de grua
+  montaTexto(false);  // o modelo chega com os dados e muda com o filtro de grua
 
   const sel = $("f-codigo").value;
   const lista = gr ? gr.codigos.map(c => [c, byCode.get(c)]) : [...byCode].sort((a, b) => b[1].total - a[1].total);
@@ -760,10 +760,14 @@ function modeloAtual() {
   return ms.filter(Boolean).join(" / ") || "(modelo)";
 }
 
-function montaTexto() {
+// Refaz o texto. Sem "forcar" (dados chegando, filtro de grua), só troca se o usuário não editou o texto à mão.
+let textoGerado = "";
+function montaTexto(forcar = true) {
   const cods = docCodigos.length ? docCodigos.join(", ") : "(inclua os códigos acima)";
-  $("d-texto").value = `Máquina Liebherr ${modeloAtual()}, com as mensagens de alerta ou erros: ${cods}, ` +
-                       `pesquise pelas possíveis causas e soluções propostas.`;
+  const novo = `Máquina Liebherr ${modeloAtual()}, com as mensagens de alerta ou erros: ${cods}, ` +
+               `pesquise pelas possíveis causas e soluções propostas.`;
+  if (forcar || $("d-texto").value === textoGerado) $("d-texto").value = novo;
+  textoGerado = novo;
   $("d-chips").innerHTML = docCodigos.map(c => `<span class="chip" title="${esc(mensagens[c] ?? "")}">${c}` +
     `<button type="button" data-rm="${c}" aria-label="Remover ${c}">×</button></span>`).join("");
 }

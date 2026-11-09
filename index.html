@@ -257,16 +257,20 @@ let porFim = new Set();  // códigos que nunca têm "+" e por isso são contados
 const marca = c => porFim.has(c) ? " ⁻" : "";
 const NOTA_FIM = `<span class="tag" title="Este código só aparece com status “−” no LiDAT; contamos esses registros.">conta o “−”</span>`;
 
+// A API devolve no máximo PAGE linhas por pedido: a 1ª página traz o total e as demais vêm em paralelo.
 async function api(path, all = true) {
-  const out = [];
-  for (let from = 0; ; from += PAGE) {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-      headers: { apikey: SUPABASE_KEY, "Range-Unit": "items", Range: `${from}-${from + PAGE - 1}` } });
+  const pagina = async (from, contar = false) => {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: { apikey: SUPABASE_KEY, "Range-Unit": "items",
+      Range: `${from}-${from + PAGE - 1}`, ...(contar ? { Prefer: "count=exact" } : {}) } });
     if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
-    const page = await r.json();
-    out.push(...page);
-    if (!all || page.length < PAGE) return out;
-  }
+    return { linhas: await r.json(), total: +(r.headers.get("Content-Range") || "").split("/")[1] || 0 };
+  };
+  const p1 = await pagina(0, all);
+  if (!all || p1.linhas.length < PAGE) return p1.linhas;
+  const froms = [];
+  for (let f = PAGE; f < p1.total; f += PAGE) froms.push(f);
+  const resto = await Promise.all(froms.map(f => pagina(f).then(p => p.linhas)));
+  return [p1.linhas, ...resto].flat();
 }
 
 const fmt = d => d.split("-").reverse().join("/");
@@ -281,8 +285,11 @@ const mensal = () => $("f-visao").value === "mes";
 const periodo = () => mensal() ? `${$("f-ano").value}-${$("f-mes").value}` : $("f-ano").value;
 const grupoAtual = () => grupos.find(g => g.nome === $("f-grupo").value);
 
+// Filtro de grua: "" = nada escolhido ainda, "*" = TODAS, ou o nome da grua. gruaSel() devolve "" para todas.
+const gruaSel = () => { const v = $("f-grua").value; return v === "*" ? "" : v; };
+
 function filtered(ignoreCode = false) {
-  const g = $("f-grua").value, t = $("f-tipo").value, c = $("f-codigo").value, p = periodo(), gr = grupoAtual();
+  const g = gruaSel(), t = $("f-tipo").value, c = $("f-codigo").value, p = periodo(), gr = grupoAtual();
   return rows.filter(r => r.dia.startsWith(p) && (!g || r.grua === g) && (!t || r.tipo === t) &&
     (gr ? gr.codigos.includes(r.codigo) : ignoreCode || !c || r.codigo === c));
 }
@@ -392,6 +399,7 @@ function optGrupoAno(p, gr, byDayCode, byCode) {
 // Grupo, mensal: calendário clássico com uma etiqueta colorida por código em cada dia.
 function optGrupoMes(p, gr, byDay) {
   const k = gr.codigos.length, linhas = Math.min(k, 3) + (k > 3 ? 1 : 0), cellH = Math.max(64, 28 + 19 * linhas);
+  celulaMes = cellH;
   const g = monthGrid(p, cellH), rich = { d: { fontSize: 12, color: css("--text") }, mais: { fontSize: 11, color: css("--text-2") } };
   gr.codigos.forEach((c, i) => rich[`c${i}`] = { backgroundColor: cor(i), color: TXT(cor(i)), borderRadius: 3,
                                                 padding: [2, 4], fontSize: 11, fontWeight: 600 });
@@ -436,6 +444,7 @@ function render() {
   $("t-desc").textContent = gr?.descricao ?? "";
 
   const byDay = new Map(), byCode = new Map(), byDayCode = new Map();
+  diasAtuais = byDay;
   for (const r of data) {
     const d = byDay.get(r.dia) || { total: 0, codes: new Map() };
     d.total += r.qtd; d.codes.set(r.codigo, (d.codes.get(r.codigo) || 0) + r.qtd);
@@ -477,6 +486,7 @@ function render() {
 // ---------- cronologia do evento (visão mensal, código escolhido) ----------
 
 let cronoCod = "", cronoChave = "", cronoRegs = null, ultimaHora = Date.now();
+let cronoDia = "", rolarCrono = false, celulaMes = 64, diasAtuais = new Map();
 const DIA_MS = 864e5;
 const p2 = n => String(n).padStart(2, "0");
 const isoLocal = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T00:00:00`;
@@ -507,7 +517,7 @@ async function cronologia() {
   const gr = grupoAtual(), c = mensal() ? (gr ? cronoCod : $("f-codigo").value) : "";
   $("crono").hidden = !c;
   if (!c) return;
-  const p = periodo(), grua = $("f-grua").value, chave = `${c}|${grua}|${p}`;
+  const p = periodo(), grua = gruaSel(), chave = `${c}|${grua}|${p}`;
   if (chave !== cronoChave) {
     cronoChave = chave; cronoRegs = null;
     $("crono-titulo").textContent = `Cronologia do evento ${c}`;
@@ -520,6 +530,29 @@ async function cronologia() {
     cronoRegs = regs;
   }
   if (cronoRegs) desenhaCrono(c, p, cronoRegs, gr);
+  if (rolarCrono && cronoRegs) {  // veio de um clique no calendário: leva até o dia clicado
+    rolarCrono = false;
+    ($("crono").querySelector("[data-alvo]") || $("crono")).scrollIntoView({ block: "center" });
+  }
+}
+
+// Clique no calendário mensal: abre a cronologia do código clicado e marca o dia.
+// No mensal com grupo, cada dia lista até 3 etiquetas de código (uma por linha de 19 px, abaixo do número do dia);
+// a linha clicada diz qual código. Com um só código no dia, qualquer ponto do quadrado serve.
+function cliqueMes(e) {
+  const dia = e.value?.[0], gr = grupoAtual();
+  if (!dia) return;
+  if (!gr) {  // sem grupo: só funciona com um código escolhido no filtro
+    if (!$("f-codigo").value) return;
+    cronoDia = dia; rolarCrono = true; render(); return;
+  }
+  const cs = [...(diasAtuais.get(dia)?.codes || [])].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+  if (!cs.length) return;
+  const [, cy] = chart.convertToPixel({ calendarIndex: 0 }, dia);
+  const linha = Math.floor((e.event.offsetY - (cy - celulaMes / 2) - 5) / 19);  // 0 = número do dia
+  const c = linha >= 1 && linha <= 3 && cs[linha - 1] ? cs[linha - 1] : cs.length === 1 ? cs[0] : null;
+  if (!c) return;
+  cronoCod = c; cronoDia = dia; rolarCrono = true; render();
 }
 
 function desenhaCrono(c, p, regs, gr) {
@@ -552,7 +585,9 @@ function desenhaCrono(c, p, regs, gr) {
         return `<i class="${x.fim ? "" : "aberto"}" style="left:${(a - d0) / (d1 - d0) * 100}%;width:${Math.max(0, b - a) / (d1 - d0) * 100}%;background-color:${corC}" title="${tip}"></i>`;
       }).join("");
       const wd = DIAS[new Date(d0).getDay()];
-      dias += `<span class="dia">${p2(d + 1)} ${wd}</span><div class="barra">${marcas}</div>`;
+      const alvo = `${p}-${p2(d + 1)}` === cronoDia;
+      dias += `<span class="dia"${alvo ? ' data-alvo style="font-weight:700;color:var(--text)"' : ""}>${p2(d + 1)} ${wd}</span>` +
+              `<div class="barra"${alvo ? ' style="outline:2px solid var(--text);outline-offset:1px"' : ""}>${marcas}</div>`;
     }
 
     const linhas = doMes.map(x => {
@@ -573,13 +608,38 @@ function desenhaCrono(c, p, regs, gr) {
   }).join("");
 }
 
+// ---------- gruas e carga dos dados ----------
+
+let gruasInfo = [], pedidoAtual = "";
+const KEY_GRUA = "lidat.grua";
+
+// Anos, último dado e rodapé da grua escolhida (ou de todas).
+function refreshAnos() {
+  const g = gruaSel(), sel = gruasInfo.filter(x => !g || x.grua === g);
+  if (!sel.length) return;
+  const y0 = Math.min(...sel.map(x => +x.primeiro.slice(0, 4))), y1 = Math.max(...sel.map(x => +x.ultimo.slice(0, 4)));
+  const anos = []; for (let y = y1; y >= y0; y--) anos.push([String(y), String(y)]);
+  opt($("f-ano"), anos);
+  const ult = sel.map(x => x.ultimo).sort().pop();
+  ultimaHora = new Date(ult).getTime();
+  $("foot").textContent = `Último evento registrado${g ? " da " + g : ""}: ${fmt(ult.slice(0, 10))} ${ult.slice(11, 19)}.`;
+}
+
 async function loadYear() {
+  const g = $("f-grua").value, ano = $("f-ano").value;
+  if (!g) {
+    rows = []; render();
+    $("status").textContent = "Escolha uma grua (ou TODAS) para carregar os dados."; $("status").className = "";
+    return;
+  }
+  gravarLocal(KEY_GRUA, g);
   $("status").textContent = "Carregando…"; $("status").className = "";
-  const ano = $("f-ano").value;
-  rows = await api(`evento_dia?select=grua,codigo,tipo,dia,qtd,contado,modelo&dia=gte.${ano}-01-01&dia=lte.${ano}-12-31&order=dia,grua,codigo`);
-  opt($("f-grua"), [["", "Todas"], ...[...new Set(rows.map(r => r.grua))].sort().map(g => [g, g])]);
+  const pedido = pedidoAtual = `${g}|${ano}`;
+  const filtro = g === "*" ? "" : `&grua=eq.${encodeURIComponent(g)}`;
+  const dados = await api(`evento_dia?select=grua,codigo,tipo,dia,qtd,contado&dia=gte.${ano}-01-01&dia=lte.${ano}-12-31${filtro}&order=dia,grua,codigo`);
+  if (pedido !== pedidoAtual) return;  // o usuário trocou de grua ou de ano no meio
+  rows = dados;
   porFim = new Set(rows.filter(r => r.contado === "-").map(r => r.codigo));
-  for (const r of rows) if (r.modelo) modelos.set(r.grua, r.modelo);
   refreshMonths(); refreshCodes(); render();
   $("status").textContent = "";
 }
@@ -755,7 +815,7 @@ let docCodigos = [];
 
 // Modelo da grua escolhida no filtro; com "Todas", os modelos das gruas do ano.
 function modeloAtual() {
-  const g = $("f-grua").value;
+  const g = gruaSel();
   const ms = g ? [modelos.get(g)] : [...new Set(modelos.values())];
   return ms.filter(Boolean).join(" / ") || "(modelo)";
 }
@@ -804,31 +864,35 @@ async function init() {
   addEventListener("resize", render);
   dark.addEventListener("change", render);
   opt($("f-tipo"), [["", "Todos"], ...Object.entries(TIPOS)]);
-  const [first] = await api("evento?select=hora&order=hora.asc&limit=1", false);
-  const [last] = await api("evento?select=hora,carregado&order=hora.desc&limit=1", false);
-  const y0 = first ? +first.hora.slice(0, 4) : new Date().getFullYear();
-  const y1 = last ? +last.hora.slice(0, 4) : y0;
-  const anos = []; for (let y = y1; y >= y0; y--) anos.push([String(y), String(y)]);
-  opt($("f-ano"), anos);
-  if (last) ultimaHora = new Date(last.hora).getTime();
-  if (last) $("foot").textContent = `Último evento registrado: ${fmt(last.hora.slice(0, 10))} ${last.hora.slice(11, 19)}.`;
-  for (const r of await api("codigo?select=codigo,mensagem")) mensagens[r.codigo] = r.mensagem;
+  // Na abertura só o leve: lista de gruas, mensagens dos códigos e grupos, tudo ao mesmo tempo.
+  // Os eventos só vêm depois que a grua é escolhida.
+  const [gs, cods] = await Promise.all([api("grua?select=grua,modelo,primeiro,ultimo&order=grua"),
+                                        api("codigo?select=codigo,mensagem"), initGrupos()]);
+  gruasInfo = gs;
+  for (const x of gs) if (x.modelo) modelos.set(x.grua, x.modelo);
+  const lembrada = lerLocal(KEY_GRUA, "");
+  opt($("f-grua"), [["", "Escolha a grua…"], ...gs.map(x => [x.grua, `${x.grua} (${x.modelo ?? "?"})`]),
+                    ["*", "TODAS (mais lento)"]], lembrada);
+  refreshAnos();
+  for (const r of cods) mensagens[r.codigo] = r.mensagem;
   // Catálogo para as sugestões: por ora, os códigos que já apareceram nos dados (descrição em inglês do LiDAT).
   catalogo = Object.entries(mensagens).sort().map(([codigo, en]) => ({ codigo, en, pt: "", busca: norm(`${en}`) }));
 
-  await initGrupos(); initDocs();
+  initDocs();
   $("f-ano").onchange = () => loadYear().catch(fail);
-  $("f-grua").onchange = $("f-tipo").onchange = () => { refreshCodes(); render(); };
+  $("f-grua").onchange = () => { refreshAnos(); loadYear().catch(fail); };
+  $("f-tipo").onchange = () => { refreshCodes(); render(); };
   $("f-codigo").onchange = render;
   $("f-visao").onchange = $("f-mes").onchange = () => { refreshCodes(); render(); };
   $("tbl").onclick = e => {
     const tr = e.target.closest("tr[data-c]"); if (!tr) return;
+    cronoDia = "";
     if (grupoAtual()) { if (mensal()) { cronoCod = cronoCod === tr.dataset.c ? "" : tr.dataset.c; render(); } return; }
     $("f-codigo").value = $("f-codigo").value === tr.dataset.c ? "" : tr.dataset.c; render();
   };
   // No anual, clicar num dia abre o mês dele.
   chart.on("click", e => {
-    if (mensal()) return;
+    if (mensal()) return cliqueMes(e);
     $("f-visao").value = "mes"; $("f-mes").value = e.value[0].slice(5, 7); refreshCodes(); render();
   });
   await loadYear();

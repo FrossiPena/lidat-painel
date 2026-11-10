@@ -55,7 +55,7 @@
   .code { font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
 
   /* Cronologia do evento (visão mensal) */
-  .crono-resumo { display: flex; gap: 24px; flex-wrap: wrap; margin: 4px 0 12px; color: var(--text-2); }
+  .crono-resumo { display: flex; gap: 4px 24px; flex-wrap: wrap; margin: 4px 0 12px; color: var(--text-2); }
   .crono-resumo b { color: var(--text); font-variant-numeric: tabular-nums; }
   .crono-dias { display: grid; grid-template-columns: 56px 1fr; gap: 3px 8px; align-items: center; font-size: 12px;
                 font-variant-numeric: tabular-nums; margin-bottom: 16px; }
@@ -71,6 +71,20 @@
   .barra i { position: absolute; top: 1px; bottom: 1px; min-width: 2px; border-radius: 2px; }
   .barra i.aberto { opacity: .5; background-image: repeating-linear-gradient(45deg, transparent 0 3px, rgb(255 255 255 / .55) 3px 6px); }
   .barra u { position: absolute; top: -2px; bottom: -2px; width: 2px; text-decoration: none; }
+  /* Comparação: uma faixa fina por código em cada dia, no mesmo eixo de 0 a 24 h */
+  .faixas { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 3px 0; }
+  .barra.fina { height: 9px; }
+  .cursor { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--text); pointer-events: none; z-index: 2; }
+  .cursor::after { content: attr(data-h); position: absolute; top: -17px; left: 4px; font-size: 11px; white-space: nowrap;
+                   background: var(--surface); border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; }
+  button.link { border: 0; background: none; color: var(--accent); padding: 0 4px; font-size: 13px; font-weight: 400; }
+  #crono-titulo .chip { margin-left: 4px; vertical-align: 1px; }
+  #dia-corpo tr { cursor: pointer; }
+  #dia-corpo tr:hover { background: var(--empty); }
+  #dia-corpo tr.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+  #dia table td { white-space: nowrap; }
+  #dia table td.msg, #dia table td.obs { white-space: normal; }
+  #dia table td.obs { color: var(--text-2); }
   #crono table td { white-space: nowrap; }
   #crono table td.obs { white-space: normal; color: var(--text-2); }
   .tag { display: inline-block; font-size: 11px; color: var(--text-2); border: 1px solid var(--border);
@@ -163,9 +177,16 @@
     <p class="hint" id="t-desc" hidden style="color:var(--text-2);font-size:13px"></p>
     <p class="hint" id="t-hint">Clique num código para ver só ele no calendário; clique de novo para voltar a todos.</p>
     <table>
-      <thead><tr><th>Código</th><th>Mensagem</th><th class="n">Ocorrências</th><th class="n">Dias</th><th>Último dia</th></tr></thead>
+      <thead><tr id="t-head"></tr></thead>
       <tbody id="tbl"></tbody>
     </table>
+  </section>
+
+  <section class="card" id="dia" hidden>
+    <h2 id="dia-titulo">Ordem cronológica do dia</h2>
+    <p class="hint">Todos os eventos do dia em ordem de início. Eventos que começaram antes ou terminaram depois do dia mostram
+      a data e a duração completa (até 7 dias para trás e para frente). Clique num evento para ver a cronologia dele no mês.</p>
+    <div id="dia-corpo"></div>
   </section>
 
   <section class="card" id="crono" hidden>
@@ -336,6 +357,9 @@ function monthGrid(p, cellH) {
   return { dias, semanas, calendar };
 }
 
+// Dia selecionado no mensal: borda escura no quadrado.
+const destaqueDia = dia => dia === diaSel ? { itemStyle: { borderColor: css("--text"), borderWidth: 3 } } : {};
+
 const cellBase = mes => ({ itemStyle: { color: css("--empty"), borderColor: css("--surface"), borderWidth: mes ? 3 : 2 },
                            splitLine: { show: false }, yearLabel: { show: false } });
 
@@ -348,7 +372,7 @@ function optPadrao(p, mes, byDay) {
     const g = monthGrid(p, 64), onDark = i => dark.matches ? i <= 2 : i >= 2;  // células escuras pedem texto claro
     points = g.dias.map(dia => {
       const q = byDay.get(dia)?.total ?? 0, fg = q && onDark(bin(q)) ? "#ffffff" : css("--text");
-      return { value: [dia, q], label: { color: fg, rich: { d: { color: fg }, n: { color: fg } } } };
+      return { value: [dia, q], label: { color: fg, rich: { d: { color: fg }, n: { color: fg } } }, ...destaqueDia(dia) };
     });
     calendar = { ...g.calendar, bottom: 44 }; height = g.semanas * 64 + 80;
   } else {
@@ -407,7 +431,8 @@ function optGrupoMes(p, gr, byDay) {
   return { height: g.semanas * cellH + 44, option: {
     visualMap: { show: false, min: 0, max: 1, inRange: { color: [css("--empty"), css("--empty")] } },
     calendar: { ...g.calendar, bottom: 8, ...cellBase(true) },
-    series: [{ type: "heatmap", coordinateSystem: "calendar", data: g.dias.map(dia => [dia, byDay.get(dia)?.total ?? 0]),
+    series: [{ type: "heatmap", coordinateSystem: "calendar",
+      data: g.dias.map(dia => ({ value: [dia, byDay.get(dia)?.total ?? 0], ...destaqueDia(dia) })),
       label: { show: true, position: "insideTopLeft", lineHeight: 19, rich,
         formatter: q => {
           const cs = [...(byDay.get(q.value[0])?.codes || [])].sort((a, b) => b[1] - a[1]);
@@ -431,16 +456,23 @@ function legenda(gr, mes) {
 function render() {
   if (!chart || !$("f-ano").value) return;
   const p = periodo(), mes = mensal(), gr = grupoAtual(), data = filtered();
+  if (!mes || !diaSel.startsWith(p + "-")) diaSel = "";  // o dia selecionado vale só para o mês exibido
   $("l-mes").hidden = !mes;
   $("l-estilo").hidden = !gr || mes;
   $("f-codigo").disabled = !!gr;
   $("s-total-l").textContent = mes ? "ocorrências no mês" : "ocorrências no ano";
-  $("t-codigos").textContent = (gr ? `Grupo “${gr.nome}”` : "Códigos") + (mes ? " no mês" : " no ano");
+  const nome = gr ? `Grupo “${esc(gr.nome)}”` : "Códigos";
+  $("t-codigos").innerHTML = diaSel ? `${nome} do dia ${fmt(diaSel)} <button type="button" class="link" id="b-mes">← voltar ao mês</button>`
+    : `${nome}${mes ? " no mês" : " no ano"}`;
   if (gr && !gr.codigos.includes(cronoCod)) cronoCod = "";
   $("t-hint").hidden = !!gr && !mes;
-  $("t-hint").textContent = gr ? "Clique num código para ver a cronologia dele (início, fim e duração) logo abaixo."
+  $("t-hint").textContent = (gr ? "Clique num código para ver a cronologia dele (início, fim e duração) logo abaixo."
     : "Clique num código para ver só ele no calendário; clique de novo para voltar a todos." +
-      (mes ? " Com um código escolhido, a cronologia aparece logo abaixo." : "");
+      (mes ? " Com um código escolhido, a cronologia aparece logo abaixo." : "")) +
+    (mes ? " Marque ☐ para comparar até 6 códigos juntos na cronologia." +
+           (diaSel ? "" : " Clique num dia do calendário (fora das etiquetas) para ver os códigos e a ordem cronológica dele.") : "");
+  $("t-head").innerHTML = `<th>Código</th><th>Mensagem</th><th class="n">Ocorrências</th>` +
+    (diaSel ? `<th>Primeiro</th><th>Último</th>` : `<th class="n">Dias</th><th>Último dia</th>`);
   $("t-desc").hidden = !gr?.descricao;
   $("t-desc").textContent = gr?.descricao ?? "";
 
@@ -475,14 +507,109 @@ function render() {
   montaTexto(false);  // o modelo chega com os dados e muda com o filtro de grua
 
   const sel = $("f-codigo").value;
-  const lista = gr ? gr.codigos.map(c => [c, byCode.get(c)]) : [...byCode].sort((a, b) => b[1].total - a[1].total);
-  $("tbl").innerHTML = lista.map(([c, v], i) =>
-    `<tr data-c="${c}" class="${(gr ? mes && c === cronoCod : c === sel) ? "sel" : ""}"><td class="code">` +
-    (gr ? `<span class="sw" style="background:${cor(i)}"></span>` : "") + `${c}</td><td>${esc(mensagens[c] ?? "")}${porFim.has(c) ? " " + NOTA_FIM : ""}` +
-    `${traducoes[c] ? `<small class="pt">${esc(traducoes[c])}</small>` : ""}</td>` +
-    `<td class="n">${(v?.total ?? 0).toLocaleString("pt-BR")}</td><td class="n">${v?.dias.size ?? 0}</td><td>${v ? fmt(v.ultimo) : "–"}</td></tr>`
-  ).join("") || `<tr><td colspan="5">Nenhuma ocorrência com esses filtros.</td></tr>`;
+  const linha = (c, cols) => `<tr data-c="${c}" class="${(gr ? mes && c === cronoCod : c === sel) ? "sel" : ""}"><td class="code">` +
+    (mes ? `<input type="checkbox" data-cmp="${c}" title="Comparar na cronologia"${comparar.has(c) ? " checked" : ""}> ` : "") +
+    (gr ? `<span class="sw" style="background:${cor(gr.codigos.indexOf(c))}"></span>` : "") +
+    `${c}</td><td>${esc(mensagens[c] ?? "")}${porFim.has(c) ? " " + NOTA_FIM : ""}` +
+    `${traducoes[c] ? `<small class="pt">${esc(traducoes[c])}</small>` : ""}</td>${cols}</tr>`;
+  let html;
+  if (diaSel) {
+    // Códigos do dia: todos (o filtro de código não esconde nada aqui); horários vêm dos registros brutos do dia.
+    const qtd = new Map();
+    for (const r of filtered(true)) if (r.dia === diaSel) qtd.set(r.codigo, (qtd.get(r.codigo) || 0) + r.qtd);
+    const hs = new Map();
+    for (const r of diaRegs && diaChave === chaveDia() ? diaRegs.dia : []) {
+      if (!doFiltro(r.codigo)) continue;
+      const h = hs.get(r.codigo); if (!h) hs.set(r.codigo, [r.hora, r.hora]); else h[1] = r.hora;
+    }
+    const cods = [...new Set([...qtd.keys(), ...hs.keys()])]
+      .sort((a, b) => (hs.get(a)?.[0] ?? "~").localeCompare(hs.get(b)?.[0] ?? "~") || a.localeCompare(b));
+    const hora = h => h ? h.slice(11, 16) : (diaRegs ? "–" : "…");
+    html = cods.map(c => linha(c, `<td class="n">${qtd.has(c) ? qtd.get(c).toLocaleString("pt-BR") : "–"}</td>` +
+      `<td>${hora(hs.get(c)?.[0])}</td><td>${hora(hs.get(c)?.[1])}</td>`)).join("");
+  } else {
+    const lista = gr ? gr.codigos.map(c => [c, byCode.get(c)]) : [...byCode].sort((a, b) => b[1].total - a[1].total);
+    html = lista.map(([c, v]) => linha(c, `<td class="n">${(v?.total ?? 0).toLocaleString("pt-BR")}</td>` +
+      `<td class="n">${v?.dias.size ?? 0}</td><td>${v ? fmt(v.ultimo) : "–"}</td>`)).join("");
+  }
+  $("tbl").innerHTML = html || `<tr><td colspan="5">Nenhuma ocorrência com esses filtros.</td></tr>`;
+  ordemDia().catch(e => { $("dia-corpo").textContent = `Erro: ${e.message}`; });
   cronologia().catch(e => { $("crono-corpo").textContent = `Erro: ${e.message}`; });
+}
+
+// ---------- dia selecionado: códigos do dia e ordem cronológica ----------
+
+let diaSel = "", diaChave = "", diaRegs = null, rolarDia = false;
+const comparar = new Set();  // códigos marcados para ver juntos na cronologia
+const MAX_COMPARAR = 6;
+const chaveDia = () => `${diaSel}|${gruaSel()}`;
+const somaDias = (dia, n) => { const [y, m, d] = dia.split("-").map(Number); return isoLocal(new Date(y, m - 1, d + n)); };
+const doFiltro = c => { const t = $("f-tipo").value, gr = grupoAtual(); return (!t || c[0] === t) && (!gr || gr.codigos.includes(c)); };
+function porGruaCodigo(regs) {
+  const m = new Map();
+  for (const r of regs) { const k = `${r.grua}|${r.codigo}`; if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+  return m;
+}
+
+async function ordemDia() {
+  $("dia").hidden = !diaSel;
+  if (!diaSel) return;
+  const chave = chaveDia(), grua = gruaSel();
+  if (chave !== diaChave) {
+    diaChave = chave; diaRegs = null;
+    $("dia-titulo").textContent = `Ordem cronológica do dia ${fmt(diaSel)}`;
+    $("dia-corpo").textContent = "Carregando…";
+    const fg = grua ? `&grua=eq.${encodeURIComponent(grua)}` : "";
+    const dia = await api(`evento?select=grua,codigo,status,hora&hora=gte.${somaDias(diaSel, 0)}` +
+                          `&hora=lt.${somaDias(diaSel, 1)}${fg}&order=hora,status`);
+    if (diaChave !== chave) return;
+    // Eventos que começaram antes do dia ou terminam depois: busca o "+"/"−" que falta, até 7 dias antes e depois.
+    const faltam = new Set();
+    for (const rs of porGruaCodigo(dia).values()) {
+      const c = rs[0].codigo;
+      if (!porFim.has(c) && pareia(rs).some(x => x.ini == null || x.fim == null)) faltam.add(c);
+    }
+    const extra = faltam.size ? await api(`evento?select=grua,codigo,status,hora&codigo=in.(${[...faltam].join(",")})` +
+      `&hora=gte.${somaDias(diaSel, -7)}&hora=lt.${somaDias(diaSel, 8)}${fg}&order=hora,status`) : [];
+    if (diaChave !== chave) return;
+    diaRegs = { dia, extra };
+    return render();  // a tabela "Códigos do dia" usa os horários
+  }
+  if (!diaRegs) return;
+  desenhaDia();
+  if (rolarDia) { rolarDia = false; $("t-codigos").scrollIntoView({ block: "start" }); }
+}
+
+function desenhaDia() {
+  const [y, m, d] = diaSel.split("-").map(Number), d0 = new Date(y, m - 1, d).getTime(), d1 = new Date(y, m - 1, d + 1).getTime();
+  const gr = grupoAtual(), todas = !gruaSel(), destaque = gr ? cronoCod : $("f-codigo").value;
+  const extra = porGruaCodigo(diaRegs.extra), evs = [];
+  for (const [k, rs] of porGruaCodigo(diaRegs.dia)) {
+    const c = rs[0].codigo;
+    if (!doFiltro(c)) continue;
+    for (const x of pareia(extra.get(k) || rs)) {
+      const a = x.ini ?? x.fim, b = x.fim ?? Infinity;
+      if (a < d1 && b >= d0) evs.push({ ...x, grua: rs[0].grua, c });
+    }
+  }
+  evs.sort((p, q) => (p.ini ?? p.fim) - (q.ini ?? q.fim));
+  if (!evs.length) return $("dia-corpo").textContent = "Nenhum evento neste dia com esses filtros.";
+  const quando = t => t == null ? "–" : t >= d0 && t < d1 ? hhmm(t) : ddhh(t);
+  const linhas = evs.map(x => {
+    const obs = [];
+    if (x.ini == null) obs.push(porFim.has(x.c) ? "registro “−” (este código não tem início)" : "fim sem início registrado");
+    else if (x.ini < d0) obs.push("começou antes do dia");
+    if (x.ini != null && x.fim == null) obs.push("em aberto até o último dado");
+    else if (x.fim >= d1) obs.push("terminou depois do dia");
+    if (x.repetidos) obs.push(`início (+) repetido ${x.repetidos}×`);
+    return `<tr data-c="${x.c}" class="${x.c === destaque ? "sel" : ""}"><td>${quando(x.ini)}</td><td>${quando(x.fim)}</td>` +
+      `<td class="n">${x.ini != null && x.fim != null ? duracao(x.fim - x.ini) : "–"}</td>` +
+      (todas ? `<td>${esc(x.grua)}</td>` : "") +
+      `<td class="code">${x.c}</td><td class="msg">${esc(mensagens[x.c] ?? "")}` +
+      `${traducoes[x.c] ? `<small class="pt">${esc(traducoes[x.c])}</small>` : ""}</td><td class="obs">${obs.join("; ")}</td></tr>`;
+  }).join("");
+  $("dia-corpo").innerHTML = `<table><thead><tr><th>Início (+)</th><th>Fim (−)</th><th class="n">Duração</th>` +
+    (todas ? "<th>Grua</th>" : "") + `<th>Código</th><th>Mensagem</th><th>Observação</th></tr></thead><tbody>${linhas}</tbody></table>`;
 }
 
 // ---------- cronologia do evento (visão mensal, código escolhido) ----------
@@ -500,114 +627,142 @@ function duracao(ms) {
 }
 
 // Casa cada "+" com o "−" seguinte. "+" com o evento já aberto não abre outro (conta como início repetido).
+// No mesmo segundo a ordem "+"/"−" não é garantida: com evento aberto, fecha primeiro; sem, abre primeiro.
 function pareia(regs) {
   const out = [], vistos = new Set();
   let aberto = null;
-  for (const r of regs) {
-    if (vistos.has(r.status + r.hora)) continue;  // o LiDAT repete linhas idênticas
-    vistos.add(r.status + r.hora);
-    const t = new Date(r.hora).getTime();
-    if (r.status === "+") { if (aberto) aberto.repetidos++; else aberto = { ini: t, fim: null, repetidos: 0 }; }
-    else if (aberto) { aberto.fim = t; out.push(aberto); aberto = null; }
-    else out.push({ ini: null, fim: t, repetidos: 0 });  // fim sem início registrado
+  for (let i = 0, j; i < regs.length; i = j) {
+    for (j = i; j < regs.length && regs[j].hora === regs[i].hora; j++);
+    const primeiro = aberto ? "-" : "+";
+    const mesmoSegundo = regs.slice(i, j).sort((a, b) => (b.status === primeiro) - (a.status === primeiro));
+    for (const r of mesmoSegundo) {
+      if (vistos.has(r.status + r.hora)) continue;  // o LiDAT repete linhas idênticas
+      vistos.add(r.status + r.hora);
+      const t = new Date(r.hora).getTime();
+      if (r.status === "+") { if (aberto) aberto.repetidos++; else aberto = { ini: t, fim: null, repetidos: 0 }; }
+      else if (aberto) { aberto.fim = t; out.push(aberto); aberto = null; }
+      else out.push({ ini: null, fim: t, repetidos: 0 });  // fim sem início registrado
+    }
   }
   if (aberto) out.push(aberto);
   return out;
 }
 
+// Códigos da cronologia: o escolhido (etiqueta, tabela ou filtro) + os marcados para comparar.
+function codsCrono() {
+  if (!mensal()) return [];
+  const um = grupoAtual() ? cronoCod : $("f-codigo").value;
+  return [...new Set([um, ...comparar].filter(Boolean))];
+}
+
 async function cronologia() {
-  const gr = grupoAtual(), c = mensal() ? (gr ? cronoCod : $("f-codigo").value) : "";
-  $("crono").hidden = !c;
-  if (!c) return;
-  const p = periodo(), grua = gruaSel(), chave = `${c}|${grua}|${p}`;
+  const gr = grupoAtual(), cods = codsCrono();
+  $("crono").hidden = !cods.length;
+  if (!cods.length) return;
+  const p = periodo(), grua = gruaSel(), chave = `${[...cods].sort()}|${grua}|${p}`;
   if (chave !== cronoChave) {
     cronoChave = chave; cronoRegs = null;
-    $("crono-titulo").textContent = `Cronologia do evento ${c}`;
+    $("crono-titulo").textContent = `Cronologia ${cods.length > 1 ? "dos eventos" : "do evento"} ${cods.join(", ")}`;
     $("crono-corpo").textContent = "Carregando…";
     // Uma semana de margem antes e depois do mês, para casar eventos que atravessam a virada do mês.
     const [y, m] = p.split("-").map(Number);
-    const regs = await api(`evento?select=grua,status,hora&codigo=eq.${c}` + (grua ? `&grua=eq.${encodeURIComponent(grua)}` : "") +
-      `&hora=gte.${isoLocal(new Date(y, m - 1, -6))}&hora=lt.${isoLocal(new Date(y, m, 8))}&order=hora`);
+    const regs = await api(`evento?select=grua,codigo,status,hora&codigo=in.(${cods.join(",")})` +
+      (grua ? `&grua=eq.${encodeURIComponent(grua)}` : "") +
+      `&hora=gte.${isoLocal(new Date(y, m - 1, -6))}&hora=lt.${isoLocal(new Date(y, m, 8))}&order=hora,status`);
     if (cronoChave !== chave) return;  // o usuário já mudou de código ou de mês
     cronoRegs = regs;
   }
-  if (cronoRegs) desenhaCrono(c, p, cronoRegs, gr);
+  if (cronoRegs) desenhaCrono(cods, p, cronoRegs, gr);
   if (rolarCrono && cronoRegs) {  // veio de um clique no calendário: leva até o dia clicado
     rolarCrono = false;
     ($("crono").querySelector("[data-alvo]") || $("crono")).scrollIntoView({ block: "center" });
   }
 }
 
-// Clique no calendário mensal: abre a cronologia do código clicado e marca o dia.
-// No mensal com grupo, cada dia lista até 3 etiquetas de código (uma por linha de 19 px, abaixo do número do dia);
-// a linha clicada diz qual código. Com um só código no dia, qualquer ponto do quadrado serve.
+// Clique no calendário mensal. Numa etiqueta de código (só com grupo): abre a cronologia dele e marca o dia.
+// Em qualquer outro ponto do dia: seleciona o dia (códigos do dia + ordem cronológica); clicar de novo desmarca.
+// Com grupo, cada dia lista até 3 etiquetas (uma por linha de 19 px, abaixo do número do dia); a linha clicada diz qual.
 function cliqueMes(e) {
   const dia = e.value?.[0], gr = grupoAtual();
   if (!dia) return;
-  if (!gr) {  // sem grupo: só funciona com um código escolhido no filtro
-    if (!$("f-codigo").value) return;
-    cronoDia = dia; rolarCrono = true; render(); return;
+  if (gr) {
+    const cs = [...(diasAtuais.get(dia)?.codes || [])].sort((a, b) => b[1] - a[1]).map(([c]) => c);
+    const [, cy] = chart.convertToPixel({ calendarIndex: 0 }, dia);
+    const linha = Math.floor((e.event.offsetY - (cy - celulaMes / 2) - 5) / 19);  // 0 = número do dia
+    const c = linha >= 1 && linha <= 3 ? cs[linha - 1] : null;
+    if (c) { cronoCod = c; cronoDia = dia; rolarCrono = true; return render(); }
   }
-  const cs = [...(diasAtuais.get(dia)?.codes || [])].sort((a, b) => b[1] - a[1]).map(([c]) => c);
-  if (!cs.length) return;
-  const [, cy] = chart.convertToPixel({ calendarIndex: 0 }, dia);
-  const linha = Math.floor((e.event.offsetY - (cy - celulaMes / 2) - 5) / 19);  // 0 = número do dia
-  const c = linha >= 1 && linha <= 3 && cs[linha - 1] ? cs[linha - 1] : cs.length === 1 ? cs[0] : null;
-  if (!c) return;
-  cronoCod = c; cronoDia = dia; rolarCrono = true; render();
+  diaSel = diaSel === dia ? "" : dia; cronoDia = diaSel; rolarDia = !!diaSel; render();
 }
 
-function desenhaCrono(c, p, regs, gr) {
+function desenhaCrono(cods, p, regs, gr) {
   const [y, m] = p.split("-").map(Number), ini0 = new Date(y, m - 1, 1).getTime(), fim0 = new Date(y, m, 1).getTime();
-  const corC = gr ? cor(gr.codigos.indexOf(c)) : css("--accent"), soFim = porFim.has(c);
+  const multi = cods.length > 1;
+  // Cor de cada código: a do grupo; sem grupo, azul para um código só e a paleta dos grupos para vários.
+  const cores = new Map(cods.map((c, i) => [c, gr?.codigos.includes(c) ? cor(gr.codigos.indexOf(c)) : multi ? cor(i) : css("--accent")]));
   const gruas = [...new Set(regs.map(r => r.grua))].sort();
-  $("crono-titulo").innerHTML = `Cronologia do evento ${c}${mensagens[c] ? " · " + esc(mensagens[c]) : ""}` +
-    (traducoes[c] ? `<small class="pt" style="font-weight:400">${esc(traducoes[c])}</small>` : "");
-  if (!gruas.length) return $("crono-corpo").textContent = "Nenhum registro deste código no mês.";
+  const limpar = comparar.size ? ` <button type="button" class="link" id="b-limpar">limpar comparação</button>` : "";
+  const c1 = cods[0];
+  $("crono-titulo").innerHTML = multi
+    ? `Cronologia de ${cods.length} eventos` + cods.map(c => `<span class="chip" style="background:${cores.get(c)};color:${TXT(cores.get(c))}" ` +
+        `title="${esc(descTexto(c))}">${c}</span>`).join("") + limpar
+    : `Cronologia do evento ${c1}${mensagens[c1] ? " · " + esc(mensagens[c1]) : ""}${limpar}` +
+      (traducoes[c1] ? `<small class="pt" style="font-weight:400">${esc(traducoes[c1])}</small>` : "");
+  if (!gruas.length) return $("crono-corpo").textContent = multi ? "Nenhum registro destes códigos no mês." : "Nenhum registro deste código no mês.";
+
+  const fimDe = x => x.fim ?? Math.max(ultimaHora, x.ini);
+  const toca = (x, d0, d1) => x.ini == null ? x.fim >= d0 && x.fim < d1
+    : Math.min(fimDe(x), d1) > Math.max(x.ini, d0) || (x.ini >= d0 && x.ini < d1);
+  // Marcas de um código num dia: barra de início a fim (tracejada se sem fim) ou traço para "−" sem "+".
+  const marcas = (c, evs, d0, d1) => evs.filter(x => toca(x, d0, d1)).map(x => {
+    const cc = cores.get(c), rot = multi ? `${c}: ` : "";
+    if (x.ini == null)
+      return `<u style="left:${(x.fim - d0) / (d1 - d0) * 100}%;background:${cc}" title="${rot}${porFim.has(c) ? "registro (−)" : "fim sem início registrado"} ${hhmm(x.fim)}"></u>`;
+    const a = Math.max(x.ini, d0), b = Math.min(fimDe(x), d1);
+    const tip = `${rot}${ddhh(x.ini)} → ${x.fim ? ddhh(x.fim) + " (" + duracao(x.fim - x.ini) + ")" : "sem fim registrado"}`;
+    return `<i class="${x.fim ? "" : "aberto"}" style="left:${(a - d0) / (d1 - d0) * 100}%;width:${Math.max(0, b - a) / (d1 - d0) * 100}%;background-color:${cc}" title="${tip}"></i>`;
+  }).join("");
 
   $("crono-corpo").innerHTML = gruas.map(g => {
-    const todos = pareia(regs.filter(r => r.grua === g));
-    const fimDe = x => x.fim ?? Math.max(ultimaHora, x.ini);
-    const doMes = todos.filter(x => (x.ini ?? x.fim) < fim0 && fimDe(x) >= ini0);
-    const fechados = doMes.filter(x => x.ini != null && x.fim != null);
-    const total = fechados.reduce((s, x) => s + x.fim - x.ini, 0);
-    const maior = fechados.reduce((a, x) => Math.max(a, x.fim - x.ini), 0);
+    const porCod = new Map(cods.map(c => [c, pareia(regs.filter(r => r.grua === g && r.codigo === c))
+      .filter(x => (x.ini ?? x.fim) < fim0 && fimDe(x) >= ini0)]));
+    const resumo = cods.map(c => {
+      const evs = porCod.get(c), fechados = evs.filter(x => x.ini != null && x.fim != null);
+      const total = fechados.reduce((s, x) => s + x.fim - x.ini, 0), maior = fechados.reduce((a, x) => Math.max(a, x.fim - x.ini), 0);
+      return `<span>${multi ? `<span class="sw" style="background:${cores.get(c)}"></span><b>${c}</b> · ` : ""}<b>${evs.length}</b> ocorrência(s) no mês</span>` +
+        (fechados.length ? `<span>duração total <b>${duracao(total)}</b></span><span>maior <b>${duracao(maior)}</b></span>` : "");
+    }).join(multi ? `<span style="flex-basis:100%;height:0"></span>` : "");
 
     // Uma barra de 0 a 24 h por dia do mês (até o último dado); o que atravessa a meia-noite aparece nos dois dias.
+    // Comparando vários códigos: uma faixa fina por código em cada dia, e só os dias em que algum deles ocorreu.
     const nDias = Math.min(new Date(y, m, 0).getDate(), Math.ceil((ultimaHora - ini0) / DIA_MS));
     let dias = `<span></span><div class="eixo"><span style="left:0">0 h</span><span style="left:25%">6 h</span>` +
                `<span style="left:50%">12 h</span><span style="left:75%">18 h</span><span style="left:100%">24 h</span></div>`;
     for (let d = 0; d < nDias; d++) {
       const d0 = new Date(y, m - 1, d + 1).getTime(), d1 = new Date(y, m - 1, d + 2).getTime();
-      const marcas = doMes.map(x => {
-        if (x.ini == null) return x.fim >= d0 && x.fim < d1
-          ? `<u style="left:${(x.fim - d0) / (d1 - d0) * 100}%;background:${corC}" title="${soFim ? "registro (−)" : "fim sem início registrado"} ${hhmm(x.fim)}"></u>` : "";
-        const a = Math.max(x.ini, d0), b = Math.min(fimDe(x), d1);
-        if (b <= a && !(x.ini >= d0 && x.ini < d1)) return "";
-        const tip = `${ddhh(x.ini)} → ${x.fim ? ddhh(x.fim) + " (" + duracao(x.fim - x.ini) + ")" : "sem fim registrado"}`;
-        return `<i class="${x.fim ? "" : "aberto"}" style="left:${(a - d0) / (d1 - d0) * 100}%;width:${Math.max(0, b - a) / (d1 - d0) * 100}%;background-color:${corC}" title="${tip}"></i>`;
-      }).join("");
-      const wd = DIAS[new Date(d0).getDay()];
-      const alvo = `${p}-${p2(d + 1)}` === cronoDia;
-      dias += `<span class="dia"${alvo ? ' data-alvo style="font-weight:700;color:var(--text)"' : ""}>${p2(d + 1)} ${wd}</span>` +
-              `<div class="barra"${alvo ? ' style="outline:2px solid var(--text);outline-offset:1px"' : ""}>${marcas}</div>`;
+      if (multi && !cods.some(c => porCod.get(c).some(x => toca(x, d0, d1)))) continue;
+      const alvo = `${p}-${p2(d + 1)}` === cronoDia, contorno = alvo ? ' style="outline:2px solid var(--text);outline-offset:1px"' : "";
+      dias += `<span class="dia"${alvo ? ' data-alvo style="font-weight:700;color:var(--text)"' : ""}>${p2(d + 1)} ${DIAS[new Date(d0).getDay()]}</span>` +
+        (multi ? `<div class="faixas"${contorno}>${cods.map(c => `<div class="barra fina">${marcas(c, porCod.get(c), d0, d1)}</div>`).join("")}</div>`
+               : `<div class="barra"${contorno}>${marcas(c1, porCod.get(c1), d0, d1)}</div>`);
     }
 
-    const linhas = doMes.map(x => {
+    const evs = cods.flatMap(c => porCod.get(c).map(x => ({ ...x, c }))).sort((a, b) => (a.ini ?? a.fim) - (b.ini ?? b.fim));
+    const linhas = evs.map(x => {
       const obs = [];
-      if (x.ini == null) obs.push(soFim ? "registro “−” (este código não tem início)" : "fim sem início registrado");
+      if (x.ini == null) obs.push(porFim.has(x.c) ? "registro “−” (este código não tem início)" : "fim sem início registrado");
       if (x.ini != null && x.fim == null) obs.push("sem fim registrado até o último dado");
       if (x.repetidos) obs.push(`início (+) repetido ${x.repetidos}× antes do fim`);
       if (x.ini != null && x.fim != null && new Date(x.ini).toDateString() !== new Date(x.fim).toDateString()) obs.push("atravessa a meia-noite");
-      return `<tr><td>${x.ini != null ? ddhh(x.ini) : "–"}</td><td>${x.fim != null ? ddhh(x.fim) : "–"}</td>` +
+      return `<tr>${multi ? `<td class="code"><span class="sw" style="background:${cores.get(x.c)}"></span>${x.c}</td>` : ""}` +
+             `<td>${x.ini != null ? ddhh(x.ini) : "–"}</td><td>${x.fim != null ? ddhh(x.fim) : "–"}</td>` +
              `<td class="n">${x.ini != null && x.fim != null ? duracao(x.fim - x.ini) : "–"}</td><td class="obs">${obs.join("; ")}</td></tr>`;
     }).join("");
 
     return (gruas.length > 1 ? `<h3 style="margin:12px 0 4px">${esc(g)}</h3>` : "") +
-      `<div class="crono-resumo"><span><b>${doMes.length}</b> ocorrência(s) no mês</span>` +
-      (fechados.length ? `<span>duração total <b>${duracao(total)}</b></span><span>maior <b>${duracao(maior)}</b></span>` : "") + `</div>` +
-      `<div class="crono-dias">${dias}</div>` +
-      `<table><thead><tr><th>Início (+)</th><th>Fim (−)</th><th class="n">Duração</th><th>Observação</th></tr></thead><tbody>${linhas}</tbody></table>`;
+      `<div class="crono-resumo">${resumo}</div><div class="crono-dias">${dias}</div>` +
+      `<table><thead><tr>${multi ? "<th>Código</th>" : ""}<th>Início (+)</th><th>Fim (−)</th><th class="n">Duração</th><th>Observação</th></tr></thead>` +
+      `<tbody>${linhas}</tbody></table>`;
   }).join("");
 }
 
@@ -902,11 +1057,39 @@ async function init() {
   $("f-codigo").onchange = render;
   $("f-visao").onchange = $("f-mes").onchange = carrega;
   $("tbl").onclick = e => {
+    const cb = e.target.closest("input[data-cmp]");
+    if (cb) {  // caixinha "comparar": só entra ou sai da cronologia, não mexe no filtro
+      if (!cb.checked) comparar.delete(cb.dataset.cmp);
+      else if (comparar.size >= MAX_COMPARAR) { cb.checked = false; return alert(`Compare no máximo ${MAX_COMPARAR} códigos.`); }
+      else comparar.add(cb.dataset.cmp);
+      return render();
+    }
     const tr = e.target.closest("tr[data-c]"); if (!tr) return;
-    cronoDia = "";
+    cronoDia = diaSel;
     if (grupoAtual()) { if (mensal()) { cronoCod = cronoCod === tr.dataset.c ? "" : tr.dataset.c; render(); } return; }
     $("f-codigo").value = $("f-codigo").value === tr.dataset.c ? "" : tr.dataset.c; render();
   };
+  $("t-codigos").onclick = e => { if (e.target.id === "b-mes") { diaSel = cronoDia = ""; render(); } };
+  $("crono-titulo").onclick = e => { if (e.target.id === "b-limpar") { comparar.clear(); render(); } };
+  // Ordem do dia: clicar num evento abre a cronologia daquele código no mês.
+  $("dia-corpo").onclick = e => {
+    const tr = e.target.closest("tr[data-c]"); if (!tr) return;
+    const c = tr.dataset.c;
+    if (grupoAtual()) cronoCod = c;
+    else { $("f-codigo").value = c; if ($("f-codigo").value !== c) { comparar.add(c); } }  // fora da lista do mês: entra pela comparação
+    cronoDia = diaSel; rolarCrono = true; render();
+  };
+  // Linha vertical com o horário sob o mouse, atravessando as faixas do dia (para comparar horários).
+  const cursor = document.createElement("b"); cursor.className = "cursor";
+  $("crono-corpo").addEventListener("mousemove", e => {
+    const alvo = e.target.closest(".faixas, .barra");
+    if (!alvo) return cursor.remove();
+    const caixa = alvo.closest(".faixas") || alvo, r = caixa.getBoundingClientRect();
+    const f = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), min = Math.round(f * 1440);
+    cursor.style.left = `${f * 100}%`; cursor.dataset.h = `${p2(Math.floor(min / 60))}:${p2(min % 60)}`;
+    if (cursor.parentNode !== caixa) caixa.appendChild(cursor);
+  });
+  $("crono-corpo").addEventListener("mouseleave", () => cursor.remove());
   // No anual, clicar num dia abre o mês dele.
   chart.on("click", e => {
     if (mensal()) return cliqueMes(e);

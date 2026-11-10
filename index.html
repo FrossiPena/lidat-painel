@@ -97,7 +97,8 @@
   #mesmo-dia { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 8px 10px; margin: 4px 0 8px;
                border: 1px solid var(--border); border-radius: 8px; background: var(--page); font-size: 13px; }
   #mesmo-dia .rot { font-weight: 600; color: var(--text-2); margin-right: 4px; }
-  #mesmo-dia label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  #mesmo-dia label { display: inline-flex; flex-direction: row; align-items: center; gap: 4px; cursor: pointer; font-size: 13px; }
+  #mesmo-dia select { min-width: 0; padding: 3px 6px; }
   #mesmo-dia .chip { cursor: pointer; }
   #mesmo-dia .info { flex-basis: 100%; color: var(--text-2); font-size: 12px; }
   #mesmo-dia .info:empty { display: none; }
@@ -340,29 +341,37 @@ function filtered(ignoreCode = false) {
   const g = gruaSel(), t = $("f-tipo").value, c = $("f-codigo").value, p = periodo(), gr = grupoAtual();
   const base = rows.filter(r => r.dia.startsWith(p) && (!g || r.grua === g) && (!t || r.tipo === t) &&
     (gr ? gr.codigos.includes(r.codigo) : ignoreCode || !c || r.codigo === c));
-  const exigidos = gr ? gr.codigos.filter(x => mesmoDia.has(x)) : [];
-  if (exigidos.length < 2) return base;
-  // "Eventos no mesmo dia": só os dias em que a MESMA grua teve todos os códigos marcados.
-  const vistos = new Map();
-  for (const r of base) if (exigidos.includes(r.codigo)) {
-    const k = `${r.grua}|${r.dia}`; if (!vistos.has(k)) vistos.set(k, new Set()); vistos.get(k).add(r.codigo);
+  const pri = gr?.codigos.includes(mdPrincipal) ? mdPrincipal : "";
+  if (!pri) return base;
+  // "Eventos no mesmo dia": dias em que a MESMA grua teve o código principal E (qualquer um dos marcados).
+  const outros = gr.codigos.filter(x => x !== pri && mesmoDia.has(x));
+  const com = new Set(), comOutro = new Set();
+  for (const r of base) {
+    const k = `${r.grua}|${r.dia}`;
+    if (r.codigo === pri) com.add(k);
+    else if (outros.includes(r.codigo)) comOutro.add(k);
   }
-  return base.filter(r => vistos.get(`${r.grua}|${r.dia}`)?.size === exigidos.length);
+  return base.filter(r => { const k = `${r.grua}|${r.dia}`; return com.has(k) && (!outros.length || comOutro.has(k)); });
 }
 
-// Códigos do grupo marcados para o filtro "eventos no mesmo dia" (vale com 2 ou mais).
+// Filtro "eventos no mesmo dia" do grupo: código principal + outros códigos marcados (basta um deles no dia).
+let mdPrincipal = "";
 const mesmoDia = new Set();
 function barraMesmoDia(gr) {
   $("mesmo-dia").hidden = !gr;
   if (!gr) return;
-  const exigidos = gr.codigos.filter(c => mesmoDia.has(c));
-  const dias = exigidos.length >= 2 ? new Set(filtered().map(r => r.dia)).size : 0;
+  const pri = gr.codigos.includes(mdPrincipal) ? mdPrincipal : "";
+  const outros = gr.codigos.filter(c => c !== pri && mesmoDia.has(c));
+  const dias = pri ? new Set(filtered().map(r => r.dia)).size : 0;
+  const chip = c => { const k = cor(gr.codigos.indexOf(c)); return `<span class="chip" style="background:${k};color:${TXT(k)}">${c}</span>`; };
   $("mesmo-dia").innerHTML = `<span class="rot">Eventos no mesmo dia:</span>` +
-    gr.codigos.map((c, i) => `<label title="${esc(descTexto(c))}"><input type="checkbox" data-md="${c}"${mesmoDia.has(c) ? " checked" : ""}>` +
-      `<span class="chip" style="background:${cor(i)};color:${TXT(cor(i))}">${c}</span></label>`).join("") +
-    `<span class="info">${exigidos.length >= 2
-      ? `Mostrando só os dias em que a mesma grua teve ${exigidos.join(" e ")}: ${dias} dia(s). Os demais códigos do grupo aparecem nesses dias.`
-      : exigidos.length === 1 ? "Marque mais um código para filtrar os dias em que ocorreram juntos." : ""}</span>`;
+    `<label>código principal <select id="md-principal"><option value="">— nenhum —</option>` +
+    gr.codigos.map(c => `<option value="${c}"${c === pri ? " selected" : ""}>${c}</option>`).join("") + `</select></label>` +
+    (pri ? `<span class="rot">com qualquer um de:</span>` + gr.codigos.filter(c => c !== pri).map(c =>
+      `<label title="${esc(descTexto(c))}"><input type="checkbox" data-md="${c}"${mesmoDia.has(c) ? " checked" : ""}>${chip(c)}</label>`).join("") : "") +
+    `<span class="info">${!pri ? "Escolha um código principal para ver só os dias em que ele ocorreu junto com outros do grupo."
+      : `Mostrando os dias em que a mesma grua teve ${pri}` + (outros.length ? ` e pelo menos um de ${outros.join(", ")}` : "") +
+        `: ${dias} dia(s).` + (outros.length ? "" : " Marque os códigos que quer conferir junto com ele.")}</span>`;
 }
 
 // Meses do ano; o padrão é o mês do último evento da grua (em anos anteriores, dezembro).
@@ -1006,8 +1015,9 @@ async function initGrupos() {
   const salvo = lerLocal(KEY_EQUIPE, null);
   if (salvo) { $("g-usuario").value = salvo.usuario; $("g-senha").value = salvo.senha; }
   acGrupo = autocompletar($("g-busca"), $("g-sug"), () => escolhidos, adiciona);
-  $("f-grupo").onchange = () => { mesmoDia.clear(); refreshCodes(); render(); };
+  $("f-grupo").onchange = () => { mdPrincipal = ""; mesmoDia.clear(); refreshCodes(); render(); };
   $("mesmo-dia").onchange = e => {
+    if (e.target.id === "md-principal") { mdPrincipal = e.target.value; mesmoDia.delete(mdPrincipal); return render(); }
     const c = e.target.dataset?.md; if (!c) return;
     if (e.target.checked) mesmoDia.add(c); else mesmoDia.delete(c);
     render();

@@ -93,6 +93,13 @@
   #status { color: var(--text-2); }
   #status.err, #g-msg { color: #d03b3b; }
   footer { color: var(--muted); font-size: 12px; }
+  #carregando { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 20;
+                background: var(--text); color: var(--surface); border-radius: 999px; padding: 8px 16px 8px 36px;
+                font-weight: 600; box-shadow: 0 2px 10px rgb(0 0 0 / .25); }
+  #carregando::before { content: ""; position: absolute; left: 14px; top: 50%; width: 12px; height: 12px; margin-top: -8px;
+                        border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%;
+                        animation: gira .8s linear infinite; }
+  @keyframes gira { to { transform: rotate(360deg); } }
 
   /* Gerenciar grupos */
   dialog { width: min(680px, calc(100% - 32px)); max-height: calc(100% - 32px); background: var(--surface); color: var(--text);
@@ -198,6 +205,7 @@
 
   <footer id="foot"></footer>
 </main>
+<div id="carregando" role="status" hidden>Recuperando dados…</div>
 
 <dialog id="dlg">
   <h2>Grupos de eventos</h2>
@@ -282,7 +290,14 @@ const marca = c => porFim.has(c) ? " ⁻" : "";
 const NOTA_FIM = `<span class="tag" title="Este código só aparece com status “−” no LiDAT; contamos esses registros.">conta o “−”</span>`;
 
 // A API devolve no máximo PAGE linhas por pedido: a 1ª página traz o total e as demais vêm em paralelo.
+// Aviso "Recuperando dados…" enquanto houver qualquer consulta ao Supabase em andamento.
+let consultas = 0;
+const consultando = d => { consultas += d; $("carregando").hidden = consultas <= 0; };
 async function api(path, all = true) {
+  consultando(1);
+  try { return await apiPaginas(path, all); } finally { consultando(-1); }
+}
+async function apiPaginas(path, all) {
   const pagina = async (from, contar = false) => {
     const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: { apikey: SUPABASE_KEY, "Range-Unit": "items",
       Range: `${from}-${from + PAGE - 1}`, ...(contar ? { Prefer: "count=exact" } : {}) } });
@@ -789,15 +804,17 @@ let carregado = "";
 async function loadDados() {
   const g = $("f-grua").value, ano = $("f-ano").value, mes = mensal(), p = periodo();
   if (!g) {
-    rows = []; carregado = ""; render();
+    rows = []; carregado = ""; pedidoAtual = ""; render();
     $("status").textContent = "Escolha uma grua (ou TODAS) para carregar os dados."; $("status").className = "";
     return;
   }
   gravarLocal(KEY_GRUA, g);
   const chave = `${g}|${mes ? p : ano}`;
-  if (carregado === chave || carregado === `${g}|${ano}`) { refreshCodes(); render(); return; }
-  $("status").textContent = "Carregando…"; $("status").className = "";
+  // Marca o pedido atual antes de tudo: uma resposta antiga ainda a caminho (ex.: TODAS, quando o usuário já
+  // voltou para uma grua que estava carregada) é descartada ao chegar, em vez de sobrescrever a tela.
   const pedido = pedidoAtual = chave;
+  $("status").textContent = ""; $("status").className = "";
+  if (carregado === chave || carregado === `${g}|${ano}`) { refreshCodes(); render(); return; }
   const [y, m] = p.split("-").map(Number);
   const faixa = mes ? `dia=gte.${p}-01&dia=lt.${m === 12 ? y + 1 : y}-${p2(m === 12 ? 1 : m + 1)}-01`
                     : `dia=gte.${ano}-01-01&dia=lte.${ano}-12-31`;
@@ -807,7 +824,6 @@ async function loadDados() {
   rows = dados; carregado = chave;
   porFim = new Set(rows.filter(r => r.contado === "-").map(r => r.codigo));
   refreshCodes(); render();
-  $("status").textContent = "";
 }
 
 // ---------- grupos da equipe (Supabase; salvar/excluir pedem usuário e senha da equipe) ----------
